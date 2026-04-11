@@ -76,12 +76,12 @@ const buttonIcon = computed(() => {
 const buttonText = computed(() => {
   if (isProcessing.value) return '思考中...'
   if (isSpeaking.value) return '说话中...'
-  if (isRecording.value) return '松开结束'
-  return '按住说话'
+  if (isRecording.value) return '聆听中...'
+  return '待命'
 })
 
 const statusHint = computed(() => {
-  return statusText.value || '按住麦克风按钮开始录音'
+  return statusText.value || '对我说话即可，无需按键'
 })
 
 const statusClass = computed(() => {
@@ -91,38 +91,44 @@ const statusClass = computed(() => {
   return ''
 })
 
-// 初始化 VAD - 暂时禁用，使用简单录音
+// 初始化 VAD - 常驻监听，无需按键
 async function initVAD() {
-  console.log("⚠️ VAD 已禁用，使用简单录音模式")
-  statusText.value = "按住说话"
-  isReady.value = true
-  return
-  
-  /* VAD 暂时禁用 - 有 WASM 加载问题
+  statusText.value = "初始化中..."
   try {
     const { MicVAD } = await import("@ricky0123/vad-web")
-    
+
     vadInstance = await MicVAD.new({
+      workersPath: '/vad/',
+      prepath: '/',
+      model: 'silero_vad_legacy',
       onSpeechStart: () => {
         console.log("🎤 检测到语音开始")
+        isRecording.value = true
         statusText.value = "正在听..."
       },
-      onSpeechEnd: (audio) => {
+      onSpeechEnd: async (audio) => {
         console.log("🎤 检测到语音结束")
-        handleSpeechEnd(audio)
+        isRecording.value = false
+        statusText.value = ""
+        await handleSpeechEnd(audio)
       },
       onVADMisfire: () => {
         console.log("🎤 VAD 误触发")
+        isRecording.value = false
         statusText.value = "没听清，请重试"
+        setTimeout(() => { statusText.value = "" }, 1500)
       }
     })
-    
-    console.log("✅ VAD 初始化完成")
+
+    await vadInstance.start()
+    isReady.value = true
+    statusText.value = ""
+    console.log("✅ VAD 初始化完成，常驻监听中")
   } catch (error) {
     console.error("❌ VAD 初始化失败:", error)
-    statusText.value = "麦克风初始化失败"
+    statusText.value = "按住说话（VAD不可用）"
+    isReady.value = true
   }
-  */
 }
 
 // 开始录音
@@ -365,7 +371,9 @@ onUnmounted(() => {
   stopRecording()
   stopVolumeDetection()
   if (vadInstance) {
+    vadInstance.pause()
     vadInstance.destroy()
+    vadInstance = null
   }
 })
 </script>

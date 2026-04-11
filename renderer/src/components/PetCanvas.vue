@@ -122,29 +122,41 @@ function loadPetModel() {
         petModel = gltf.scene
         
         // 处理纹理：尝试使用原始材质，若纹理无法编译则降级为纯色材质
-        petModel.traverse((child) => {
-          if (child.isMesh) {
-            // 克隆材质避免共享引用被意外修改
-            child.material = child.material.clone()
-            const mat = child.material
-            // 若材质包含 map 纹理，注册错误回调，失败时降级为棕色
-            if (mat.map) {
-              mat.map.addEventListener('error', () => {
-                console.warn(`⚠️ 纹理编译失败，使用默认颜色: ${child.name}`)
-                mat.map = null
-                mat.color.setHex(0xD2691E)
-                mat.needsUpdate = true
-              })
-            }
-            // 若纹理图像已经无效（blob 加载失败），立即降级
-            if (mat.map && mat.map.image && mat.map.image.tagName === 'IMG' && !mat.map.image.complete) {
-              mat.map.image.onerror = () => {
-                mat.map = null
-                mat.color.setHex(0xD2691E)
-                mat.needsUpdate = true
-              }
-            }
-          }
+        // 加载外部 PBR 贴图并应用到模型所有网格
+        const textureLoader = new THREE.TextureLoader()
+        const texturePaths = {
+          map:          './textures/texture_pbr_20250901.png',
+          metalnessMap: './textures/texture_pbr_20250901_metallic.png',
+          roughnessMap: './textures/texture_pbr_20250901_roughness.png',
+          normalMap:    './textures/texture_pbr_20250901_normal.png'
+        }
+
+        // 预先加载所有贴图，然后批量应用
+        const texturePromises = Object.entries(texturePaths).map(([slot, url]) =>
+          new Promise((resolve) => {
+            textureLoader.load(
+              url,
+              (tex) => { tex.colorSpace = slot === 'map' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace; resolve({ slot, tex }) },
+              undefined,
+              (err) => { console.warn(`⚠️ 贴图加载失败 ${url}:`, err.message); resolve({ slot, tex: null }) }
+            )
+          })
+        )
+
+        Promise.all(texturePromises).then((results) => {
+          const texMap = Object.fromEntries(results.map(({ slot, tex }) => [slot, tex]))
+          petModel.traverse((child) => {
+            if (!child.isMesh) return
+            const mat = new THREE.MeshStandardMaterial()
+            if (texMap.map)          { mat.map = texMap.map }
+            if (texMap.metalnessMap) { mat.metalnessMap = texMap.metalnessMap; mat.metalness = 1 }
+            if (texMap.roughnessMap) { mat.roughnessMap = texMap.roughnessMap; mat.roughness = 1 }
+            if (texMap.normalMap)    { mat.normalMap = texMap.normalMap; mat.normalScale.set(1, 1) }
+            if (!texMap.map)         { mat.color.setHex(0xD2691E) }
+            child.material = mat
+            child.material.needsUpdate = true
+          })
+          console.log('✅ PBR 贴图应用完成')
         })
         
         // 自动调整大小以适应窗口
