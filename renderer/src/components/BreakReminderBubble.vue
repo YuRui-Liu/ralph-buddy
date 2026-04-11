@@ -19,14 +19,14 @@
 import { inject } from 'vue'
 
 // App.vue 通过 provide('breakReminder', { confirm, snooze }) 注入
-const breakReminder = inject('breakReminder')
+const breakReminder = inject('breakReminder', null)
 
 function onConfirm() {
-  breakReminder.confirm()
+  breakReminder?.confirm()
 }
 
 function onSnooze() {
-  breakReminder.snooze()
+  breakReminder?.snooze()
 }
 </script>
 

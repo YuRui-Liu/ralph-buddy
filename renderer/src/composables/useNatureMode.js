@@ -52,6 +52,7 @@ export function useNatureMode(petCanvasRef) {
   let timer = null
 
   function scheduleNext() {
+    if (timer) clearTimeout(timer)
     timer = setTimeout(triggerBehavior, randomInterval())
   }
 

@@ -70,6 +70,9 @@ onMounted(() => {
 onUnmounted(() => {
   destroyNature()
   destroyBreak()
+  if (window.electronAPI) {
+    window.electronAPI.removeAllAppListeners()
+  }
 })
 </script>
 
