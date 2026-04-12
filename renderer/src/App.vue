@@ -17,6 +17,12 @@
 
     <!-- 休息提醒气泡 -->
     <BreakReminderBubble v-if="uiStore.showBreakReminder" />
+
+    <!-- 记忆管理面板 -->
+    <MemoryPanel
+      v-if="uiStore.showMemoryPanel"
+      @close="uiStore.closeMemoryPanel()"
+    />
   </div>
 </template>
 
@@ -30,6 +36,7 @@ import InputPanel from './components/InputPanel.vue'
 import VoiceRecorder from './components/VoiceRecorder.vue'
 import VoiceManager from './components/VoiceManager.vue'
 import BreakReminderBubble from './components/BreakReminderBubble.vue'
+import MemoryPanel from './components/MemoryPanel.vue'
 import { useNatureMode } from './composables/useNatureMode'
 import { useBreakReminder } from './composables/useBreakReminder'
 
@@ -63,6 +70,9 @@ onMounted(() => {
     })
     window.electronAPI.onToggleNatureMode((enabled) => {
       uiStore.setNatureMode(enabled)
+    })
+    window.electronAPI.onOpenMemory(() => {
+      uiStore.openMemoryPanel()
     })
   }
 })
