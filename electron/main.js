@@ -48,6 +48,16 @@ function createWindow() {
   // 始终打开 DevTools 以便调试
   mainWindow.webContents.openDevTools({ mode: 'detach' })
 
+  // 右键菜单（直接右键来福）
+  mainWindow.webContents.on('context-menu', () => {
+    Menu.buildFromTemplate([
+      { label: '🧠 记忆管理', click: openMemoryPanel },
+      { type: 'separator' },
+      { label: '显示/隐藏', click: toggleWindow },
+      { label: '退出', click: quitApp }
+    ]).popup({ window: mainWindow })
+  })
+
   // 窗口关闭时清理
   mainWindow.on('closed', () => {
     mainWindow = null
