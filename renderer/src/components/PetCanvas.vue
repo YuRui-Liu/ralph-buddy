@@ -5,7 +5,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader'
 import { usePetStore, PetState } from '../stores/pet'
 import { useUiStore } from '../stores/ui'
 
@@ -80,126 +80,59 @@ function initScene() {
   animate()
 }
 
-// 加载宠物模型
+// 加载宠物模型（FBX，内置贴图材质和骨骼）
 function loadPetModel() {
-  const loader = new GLTFLoader()
-  
-  // 设置加载选项 - 忽略纹理错误
-  loader.setCrossOrigin('anonymous')
-  
-  // 添加加载超时（模型很大，需要更长时间）
-  const timeout = setTimeout(() => {
-    console.warn('模型加载超时，创建默认宠物')
-    createDefaultPet()
-  }, 60000) // 60秒超时
-  
-  // 尝试多个路径（开发模式和生产模式）
-  const modelPaths = [
-    './models/dog_lifu.glb',           // 相对路径（推荐）
-    '/models/dog_lifu.glb',            // 绝对路径
-    'models/dog_lifu.glb',             // 无斜杠
-    new URL('./models/dog_lifu.glb', import.meta.url).href  // Vite 处理
-  ]
-  
-  let currentPathIndex = 0
-  
-  function tryLoadModel() {
-    if (currentPathIndex >= modelPaths.length) {
-      clearTimeout(timeout)
-      console.error('❌ 所有路径都加载失败')
-      createDefaultPet()
-      return
-    }
-    
-    const path = modelPaths[currentPathIndex]
-    console.log(`🔄 尝试加载模型: ${path}`)
-    
-    loader.load(path, 
-      (gltf) => {
-        clearTimeout(timeout)
-        console.log('✅ 宠物模型加载成功')
-        
-        petModel = gltf.scene
-        
-        // 处理纹理：尝试使用原始材质，若纹理无法编译则降级为纯色材质
-        // 加载外部 PBR 贴图并应用到模型所有网格
-        const textureLoader = new THREE.TextureLoader()
-        const texturePaths = {
-          map:          './textures/texture_pbr_20250901.png',
-          metalnessMap: './textures/texture_pbr_20250901_metallic.png',
-          roughnessMap: './textures/texture_pbr_20250901_roughness.png',
-          normalMap:    './textures/texture_pbr_20250901_normal.png'
+  const loader = new FBXLoader()
+
+  console.log('🔄 加载 FBX 模型: /models/rhyfu2.fbx')
+
+  loader.load(
+    '/models/rhyfu2.fbx',
+    (object) => {
+      console.log('✅ FBX 模型加载成功')
+      petModel = object
+
+      // 开启阴影投射
+      petModel.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true
+          child.receiveShadow = true
         }
+      })
 
-        // 预先加载所有贴图，然后批量应用
-        const texturePromises = Object.entries(texturePaths).map(([slot, url]) =>
-          new Promise((resolve) => {
-            textureLoader.load(
-              url,
-              (tex) => { tex.colorSpace = slot === 'map' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace; resolve({ slot, tex }) },
-              undefined,
-              (err) => { console.warn(`⚠️ 贴图加载失败 ${url}:`, err.message); resolve({ slot, tex: null }) }
-            )
-          })
-        )
+      // 自动缩放使模型适应视口
+      const box = new THREE.Box3().setFromObject(petModel)
+      const size = box.getSize(new THREE.Vector3())
+      const maxDim = Math.max(size.x, size.y, size.z)
+      const scale = 2 / maxDim
+      petModel.scale.set(scale, scale, scale)
 
-        Promise.all(texturePromises).then((results) => {
-          const texMap = Object.fromEntries(results.map(({ slot, tex }) => [slot, tex]))
-          petModel.traverse((child) => {
-            if (!child.isMesh) return
-            const mat = new THREE.MeshStandardMaterial()
-            if (texMap.map)          { mat.map = texMap.map }
-            if (texMap.metalnessMap) { mat.metalnessMap = texMap.metalnessMap; mat.metalness = 1 }
-            if (texMap.roughnessMap) { mat.roughnessMap = texMap.roughnessMap; mat.roughness = 1 }
-            if (texMap.normalMap)    { mat.normalMap = texMap.normalMap; mat.normalScale.set(1, 1) }
-            if (!texMap.map)         { mat.color.setHex(0xD2691E) }
-            child.material = mat
-            child.material.needsUpdate = true
-          })
-          console.log('✅ PBR 贴图应用完成')
+      // 居中并落在地面
+      const center = box.getCenter(new THREE.Vector3())
+      petModel.position.set(-center.x * scale, -box.min.y * scale - 1, -center.z * scale)
+
+      scene.add(petModel)
+      console.log(`📐 FBX 尺寸: ${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)}, 缩放: ${scale.toFixed(3)}`)
+
+      // 加载动画
+      if (object.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(petModel)
+        object.animations.forEach((clip, index) => {
+          animations[clip.name || `anim_${index}`] = mixer.clipAction(clip)
         })
-        
-        // 自动调整大小以适应窗口
-        const box = new THREE.Box3().setFromObject(petModel)
-        const size = box.getSize(new THREE.Vector3())
-        const maxDim = Math.max(size.x, size.y, size.z)
-        const scale = 2 / maxDim // 缩放使最大维度为2
-        
-        petModel.scale.set(scale, scale, scale)
-        petModel.position.y = -1
-        
-        // 居中
-        const center = box.getCenter(new THREE.Vector3())
-        petModel.position.x = -center.x * scale
-        petModel.position.z = -center.z * scale
-        
-        scene.add(petModel)
-        console.log(`📐 模型尺寸: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}, 缩放: ${scale.toFixed(2)}`)
-        
-        // 保存动画
-        if (gltf.animations.length > 0) {
-          mixer = new THREE.AnimationMixer(petModel)
-          gltf.animations.forEach((clip, index) => {
-            animations[clip.name || `anim_${index}`] = mixer.clipAction(clip)
-          })
-          console.log(`🎬 加载了 ${gltf.animations.length} 个动画`)
-        }
-      },
-      (progress) => {
-        const percent = progress.total > 0 
-          ? (progress.loaded / progress.total * 100).toFixed(0)
-          : (progress.loaded / 1024 / 1024).toFixed(1) + 'MB'
-        console.log(`模型加载进度: ${percent}%`)
-      },
-      (error) => {
-        console.warn(`⚠️ 路径 ${path} 加载失败:`, error.message)
-        currentPathIndex++
-        tryLoadModel() // 尝试下一个路径
+        console.log(`🎬 加载了 ${object.animations.length} 个动画`)
       }
-    )
-  }
-  
-  tryLoadModel()
+    },
+    (progress) => {
+      const mb = (progress.loaded / 1024 / 1024).toFixed(1)
+      const pct = progress.total > 0 ? (progress.loaded / progress.total * 100).toFixed(0) + '%' : mb + 'MB'
+      console.log(`FBX 加载进度: ${pct}`)
+    },
+    (error) => {
+      console.error('❌ FBX 加载失败:', error.message)
+      createDefaultPet()
+    }
+  )
 }
 
 // 创建默认宠物（加载失败时使用）

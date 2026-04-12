@@ -31,7 +31,6 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    exclude: ['onnxruntime-web'],
-    include: ['@ricky0123/vad-web']
+    exclude: ['onnxruntime-web']
   }
 })

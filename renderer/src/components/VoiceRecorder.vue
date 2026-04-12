@@ -95,7 +95,8 @@ const statusClass = computed(() => {
 async function initVAD() {
   statusText.value = "初始化中..."
   try {
-    const { MicVAD } = await import("@ricky0123/vad-web")
+    if (!window.vad?.MicVAD) throw new Error("VAD 脚本未加载，请刷新页面")
+    const { MicVAD } = window.vad
 
     vadInstance = await MicVAD.new({
       workersPath: '/vad/',
