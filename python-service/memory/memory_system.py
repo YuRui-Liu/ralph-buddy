@@ -44,6 +44,7 @@ class MemorySystem:
         self.conn: Optional[sqlite3.Connection] = None
         self.chroma_client = None
         self.collection = None
+        self._compressing = False
 
     # ------------------------------------------------------------------ #
     #  初始化                                                               #
@@ -201,6 +202,9 @@ class MemorySystem:
         """
         if len(self.short_term) < COMPRESS_BATCH:
             return
+        if self._compressing:
+            return
+        self._compressing = True
 
         to_compress     = self.short_term[:COMPRESS_BATCH]
         self.short_term = self.short_term[COMPRESS_BATCH:]
@@ -247,9 +251,11 @@ class MemorySystem:
                 asyncio.create_task(self._embed_summary(summary))
 
             print(f"✅ 记忆压缩完成，提取 {len(facts)} 条画像")
+            self._compressing = False
         except Exception as e:
             print(f"⚠️ 记忆压缩失败: {e}")
             self.short_term = to_compress + self.short_term   # 回滚
+            self._compressing = False
 
     async def _embed_summary(self, summary: str):
         doc_id = f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"

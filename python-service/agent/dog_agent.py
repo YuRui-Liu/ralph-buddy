@@ -139,7 +139,7 @@ class DogBuddyAgent:
     async def _call_single_llm(self, prompt: str) -> str:
         """单轮调用 LLM，用于摘要/画像提取（无历史上下文）"""
         if not (self.llm_client and self.llm_ready):
-            return '{"summary": "对话摘要", "facts": []}'
+            return '{"summary": "", "facts": []}'
         response = await self.llm_client.chat.completions.create(
             model=self.config['llm']['model'],
             messages=[{"role": "user", "content": prompt}],
@@ -159,15 +159,15 @@ class DogBuddyAgent:
     def _fallback_reply(self, user_message: str) -> str:
         import random
         kw_map = {
-            "你好": ["汪！主人好！来福好想你！", "嗷呜~ 主人回来啦！"],
-            "吃饭": ["汪！我也饿了！", "来福也想吃东西~"],
-            "玩":   ["好呀好呀！来福要玩！", "汪！玩什么？"],
-            "睡":   ["Zzz... 来福困了...", "汪... 要睡觉了吗？"],
+            "你好": [f"汪！主人好！{self.pet_name}好想你！", "嗷呜~ 主人回来啦！"],
+            "吃饭": ["汪！我也饿了！", f"{self.pet_name}也想吃东西~"],
+            "玩":   [f"好呀好呀！{self.pet_name}要玩！", "汪！玩什么？"],
+            "睡":   [f"Zzz... {self.pet_name}困了...", "汪... 要睡觉了吗？"],
         }
         for kw, responses in kw_map.items():
             if kw in user_message:
                 return random.choice(responses)
         return random.choice([
-            "汪？来福在听呢~", "嗷呜？主人说什么？",
-            "来福不太懂，但来福陪着你！", "汪！主人能再说一遍吗？",
+            f"汪？{self.pet_name}在听呢~", "嗷呜？主人说什么？",
+            f"{self.pet_name}不太懂，但{self.pet_name}陪着你！", "汪！主人能再说一遍吗？",
         ])
