@@ -24,6 +24,8 @@ CHROMA_PATH = os.path.join(BASE_DIR, 'chromadb')
 # 本地 embedding 模型路径（找不到则用 Chroma 内置默认）
 LOCAL_EMBED_MODEL = r'E:\LLM\backbone\embeddings\all-MiniLM-L6-v2'
 
+COMPRESS_BATCH = 12   # 一次压缩的对话条数（6 轮），agent 在 short_term >= MAX_SHORT_TERM 时触发
+
 
 class MemorySystem:
     """
@@ -160,9 +162,12 @@ class MemorySystem:
 
         if self.collection:
             try:
-                hits = self.collection.query(query_texts=[query], n_results=top_k)
-                if hits.get("documents"):
-                    results.extend(hits["documents"][0])
+                count = self.collection.count()
+                if count > 0:
+                    actual_k = min(top_k, count)
+                    hits = self.collection.query(query_texts=[query], n_results=actual_k)
+                    if hits.get("documents"):
+                        results.extend(hits["documents"][0])
             except Exception as e:
                 print(f"⚠️ 向量检索失败: {e}")
 
@@ -194,11 +199,11 @@ class MemorySystem:
 
         llm_caller: async (prompt: str) -> str
         """
-        if len(self.short_term) < 12:
+        if len(self.short_term) < COMPRESS_BATCH:
             return
 
-        to_compress     = self.short_term[:12]
-        self.short_term = self.short_term[12:]
+        to_compress     = self.short_term[:COMPRESS_BATCH]
+        self.short_term = self.short_term[COMPRESS_BATCH:]
 
         conv_text = "\n".join(
             f"{'用户' if m['role'] == 'user' else '来福'}: {m['content']}"
