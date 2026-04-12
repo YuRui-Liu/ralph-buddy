@@ -421,9 +421,30 @@ async def clear_memory():
     """清除所有记忆"""
     if not memory:
         raise HTTPException(status_code=503, detail="记忆系统未初始化")
-    
+
     await memory.clear_all()
     return {"status": "success"}
+
+
+@app.get("/api/memory/events")
+async def list_memory_events():
+    """列出所有手动添加的重要记忆"""
+    if not memory:
+        raise HTTPException(status_code=503, detail="记忆系统未初始化")
+    events = await memory.list_events()
+    return {"events": events}
+
+
+@app.delete("/api/memory/events/{event_id}")
+async def delete_memory_event(event_id: int):
+    """删除单条重要记忆"""
+    if not memory:
+        raise HTTPException(status_code=503, detail="记忆系统未初始化")
+    success = await memory.delete_event(event_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return {"status": "success"}
+
 
 @app.get("/api/memory/search")
 async def search_memory(query: str, top_k: int = 5):
