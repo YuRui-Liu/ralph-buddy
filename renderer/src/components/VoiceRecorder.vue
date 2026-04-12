@@ -197,84 +197,97 @@ async function handleRecordingStop() {
     statusText.value = "录音太短，请重试"
     return
   }
-  
+
   isProcessing.value = true
   statusText.value = "识别中..."
-  
+
   try {
-    // 合并音频数据
+    const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
+
+    // Step 1: STT — 识别用户说的话
     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
-    
-    // 发送到后端进行识别
     const formData = new FormData()
     formData.append('audio', audioBlob, 'recording.webm')
     formData.append('language', 'zh')
-    
-    const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
-    
-    const response = await fetch(`http://127.0.0.1:${pythonPort}/api/stt`, {
+
+    const sttRes = await fetch(`http://127.0.0.1:${pythonPort}/api/stt`, {
       method: 'POST',
       body: formData
     })
-    
-    if (!response.ok) {
-      throw new Error(`STT 请求失败: ${response.status}`)
-    }
-    
-    const result = await response.json()
-    
-    if (result.text && result.text.trim()) {
-      // 发送识别结果到对话
-      await chatStore.sendMessage(result.text)
-      statusText.value = `识别: "${result.text}"`
-      
-      // 播放回复语音
-      await playResponse(result.text)
-    } else {
+    if (!sttRes.ok) throw new Error(`STT 请求失败: ${sttRes.status}`)
+
+    const sttResult = await sttRes.json()
+    const userText = sttResult.text?.trim()
+    if (!userText) {
       statusText.value = "没听清，请重试"
+      return
     }
-    
+
+    // 记录用户消息到聊天记录
+    chatStore.addMessage('user', userText)
+    statusText.value = `你: "${userText}"`
+
+    // Step 2: Chat — 获取来福的回复
+    statusText.value = "来福思考中..."
+    const chatRes = await fetch(`http://127.0.0.1:${pythonPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: userText })
+    })
+    if (!chatRes.ok) throw new Error(`Chat 请求失败: ${chatRes.status}`)
+
+    const chatData = await chatRes.json()
+    const replyText = chatData.reply
+    if (!replyText) throw new Error("没有收到回复")
+
+    // 显示来福回复气泡
+    chatStore.addMessage('assistant', replyText)
+    chatStore.showMessage(replyText, 6000)
+
+    // Step 3: TTS — 用来福专属声音播放回复
+    await playResponse(replyText)
+
   } catch (error) {
-    console.error("❌ 语音识别失败:", error)
-    statusText.value = "识别失败，请重试"
+    console.error("❌ 语音对话失败:", error)
+    statusText.value = "出错了，请重试"
   } finally {
     isProcessing.value = false
   }
 }
 
-// 播放回复语音
+// 播放回复语音（使用来福专属声音）
 async function playResponse(text) {
   try {
     isSpeaking.value = true
-    statusText.value = "播放语音..."
-    
+    statusText.value = "来福说话中..."
+
     const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
-    
+
+    const formData = new FormData()
+    formData.append('text', text)
+    // voice_id 留空，后端默认用 laifu-clone（若已启动）
+
     const response = await fetch(`http://127.0.0.1:${pythonPort}/api/tts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice_id: null })
+      body: formData
     })
-    
-    if (!response.ok) {
-      throw new Error(`TTS 请求失败: ${response.status}`)
-    }
-    
-    // 播放音频
-    const audioBlob = await response.blob()
+
+    if (!response.ok) throw new Error(`TTS 请求失败: ${response.status}`)
+
+    const contentType = response.headers.get('content-type') || 'audio/mpeg'
+    const audioBlob = new Blob([await response.arrayBuffer()], { type: contentType })
     const audioUrl = URL.createObjectURL(audioBlob)
     const audio = new Audio(audioUrl)
-    
-    audio.onended = () => {
-      isSpeaking.value = false
-      statusText.value = ""
-      URL.revokeObjectURL(audioUrl)
-    }
-    
-    await audio.play()
-    
+
+    await new Promise((resolve) => {
+      audio.onended = () => { URL.revokeObjectURL(audioUrl); resolve() }
+      audio.onerror = () => { URL.revokeObjectURL(audioUrl); resolve() }
+      audio.play().catch(resolve)
+    })
+
   } catch (error) {
     console.error("❌ 语音播放失败:", error)
+  } finally {
     isSpeaking.value = false
     statusText.value = ""
   }
