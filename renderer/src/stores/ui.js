@@ -10,6 +10,7 @@ export const useUiStore = defineStore('ui', () => {
   const natureMode = ref(true)
   const petScale = ref(1) // 0.8 | 1 | 1.2
   const showBreakReminder = ref(false)
+  const showMemoryPanel = ref(false)
   const breakReminderSnoozeCount = ref(0)
 
   // 方法
@@ -61,6 +62,14 @@ export const useUiStore = defineStore('ui', () => {
     breakReminderSnoozeCount.value = 0
   }
 
+  function openMemoryPanel() {
+    showMemoryPanel.value = true
+  }
+
+  function closeMemoryPanel() {
+    showMemoryPanel.value = false
+  }
+
   return {
     showInput,
     showSettings,
@@ -82,5 +91,8 @@ export const useUiStore = defineStore('ui', () => {
     hideBreakReminderDialog,
     incrementBreakSnooze,
     resetBreakSnooze,
+    showMemoryPanel,
+    openMemoryPanel,
+    closeMemoryPanel,
   }
 })
