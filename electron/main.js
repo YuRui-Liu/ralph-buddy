@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, session } = require('electron')
 const path = require('path')
+const { pathToFileURL } = require('url')
 const { spawn } = require('child_process')
 
 // 保持窗口和托盘的全局引用
@@ -179,6 +180,18 @@ ipcMain.on('move-window', (event, { x, y }) => {
 // IPC 通信：获取 Python 端口
 ipcMain.handle('get-python-port', () => {
   return 18765  // 默认端口
+})
+
+// IPC 通信：获取 VAD 目录的 file:// URL
+// 渲染进程用此路径初始化 ORT/VAD，file:// 协议下 Chromium 正确处理 WASM
+// ORT 内部 ja(b) 检测到 file:// 直接走 ArrayBuffer 路径，不触发 streaming compile 报错
+ipcMain.handle('get-vad-base-path', () => {
+  const isDev = process.argv.includes('--dev')
+  const vadDir = isDev
+    ? path.join(__dirname, '../renderer/public/vad')
+    : path.join(process.resourcesPath, 'vad')
+  // pathToFileURL 在 Windows/Linux/Mac 下均生成正确的 file:// 路径
+  return pathToFileURL(vadDir).href + '/'
 })
 
 // IPC 通信：设置鼠标穿透

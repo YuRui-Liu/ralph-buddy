@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('electronAPI', {
   // Python 服务
   getPythonPort: () => ipcRenderer.invoke('get-python-port'),
+
+  // VAD/WASM 路径（file:// 协议，让 ORT 跳过 streaming compile）
+  getVadBasePath: () => ipcRenderer.invoke('get-vad-base-path'),
   
   // 窗口控制
   moveWindow: (delta) => ipcRenderer.send('move-window', delta),

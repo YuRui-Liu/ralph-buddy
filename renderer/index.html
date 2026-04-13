@@ -28,19 +28,21 @@
          Vite dev server 有时不能为 .wasm 文件返回 application/wasm，
          此 patch 在浏览器层拦截，自动降级为 ArrayBuffer 编译，不抛出错误 -->
     <script>
+    /* 兜底 patch：仅在非 Electron 环境（纯浏览器/Vite dev）生效
+       Electron 环境下 VoiceRecorder 已通过 file:// 路径绕过 streaming compile，此 patch 不会被触发 */
     ;(function () {
       var _cs = WebAssembly.compileStreaming
       var _is = WebAssembly.instantiateStreaming
       WebAssembly.compileStreaming = async function (source) {
         var r = await Promise.resolve(source)
-        var ct = (r.headers && r.headers.get('content-type')) || ''
-        if (ct.indexOf('application/wasm') >= 0) return _cs(r)
+        var ct = (r && r.headers && r.headers.get('content-type')) || ''
+        if (ct.indexOf('application/wasm') >= 0) return _cs.call(WebAssembly, Promise.resolve(r))
         return WebAssembly.compile(await r.arrayBuffer())
       }
       WebAssembly.instantiateStreaming = async function (source, imports) {
         var r = await Promise.resolve(source)
-        var ct = (r.headers && r.headers.get('content-type')) || ''
-        if (ct.indexOf('application/wasm') >= 0) return _is(r, imports)
+        var ct = (r && r.headers && r.headers.get('content-type')) || ''
+        if (ct.indexOf('application/wasm') >= 0) return _is.call(WebAssembly, Promise.resolve(r), imports)
         return WebAssembly.instantiate(await r.arrayBuffer(), imports)
       }
     })()

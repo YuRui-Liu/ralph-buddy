@@ -101,28 +101,26 @@ async function initVAD() {
     const { MicVAD } = window.vad
     const ort = window.ort
 
-    const isDev = window.location.protocol === 'http:'
-    const basePath = isDev ? '' : '.'
-    // onnxWASMBasePath 必须显式传入，否则 vad.bundle.min.js 内部会把 wasmPaths 覆盖为 undefined
-    const onnxWASMBasePath = isDev
-      ? `${window.location.origin}/vad/`
-      : './vad/'
-
-    // 预先 fetch WASM 二进制并写入 ort.env.wasm.wasmBinary
-    // bundle 内部检测到 wasmBinary 时直接使用，跳过 WebAssembly.compileStreaming
-    // 从而彻底消除 "Incorrect response MIME type" 警告
-    try {
-      const wasmUrl = `${onnxWASMBasePath}ort-wasm-simd-threaded.wasm`
-      const wasmBuf = await fetch(wasmUrl).then(r => r.arrayBuffer())
-      ort.env.wasm.wasmBinary = wasmBuf
-    } catch (e) {
-      console.warn('WASM 预加载失败，回退到 bundle 自动加载', e)
+    // 优先使用 Electron 提供的 file:// 路径
+    // ORT 内部 ja(b) 检测到 file:// 开头时直接跳过 streaming compile，
+    // 走 XHR/ArrayBuffer 路径，彻底消除 "Incorrect response MIME type" 报错
+    let onnxWASMBasePath
+    let modelURL
+    if (window.electronAPI?.getVadBasePath) {
+      onnxWASMBasePath = await window.electronAPI.getVadBasePath()
+      // 把 file:// vad 目录路径转换为 model URL
+      modelURL = onnxWASMBasePath + 'silero_vad_legacy.onnx'
+    } else {
+      // 浏览器回退（非 Electron 环境）
+      const isDev = window.location.protocol === 'http:'
+      onnxWASMBasePath = isDev ? `${window.location.origin}/vad/` : './vad/'
+      modelURL = (isDev ? '' : '.') + '/vad/silero_vad_legacy.onnx'
     }
 
     vadInstance = await MicVAD.new({
       ort: ort,
       onnxWASMBasePath,
-      modelURL: `${basePath}/vad/silero_vad_legacy.onnx`,
+      modelURL,
       minSpeechFrames: 3,
       maxSpeechFrames: 300,
       positiveSpeechThreshold: 0.5,
