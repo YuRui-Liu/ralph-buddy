@@ -15,13 +15,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onToggleFocusMode: (callback) => ipcRenderer.on('toggle-focus-mode', callback),
   onToggleNatureMode: (callback) => ipcRenderer.on('toggle-nature-mode', (event, enabled) => callback(enabled)),
   onOpenMemory: (callback) => ipcRenderer.on('open-memory', callback),
+  onCloseSettings: (callback) => ipcRenderer.on('close-settings', callback),
   removeAllAppListeners: () => {
     ipcRenderer.removeAllListeners('open-settings')
     ipcRenderer.removeAllListeners('open-voice-manager')
     ipcRenderer.removeAllListeners('toggle-focus-mode')
     ipcRenderer.removeAllListeners('toggle-nature-mode')
     ipcRenderer.removeAllListeners('open-memory')
+    ipcRenderer.removeAllListeners('close-settings')
   },
+
+  // 显式关闭设置
+  closeSettings: () => ipcRenderer.send('close-settings'),
+
+  // 窗口控制
+  hideWindow: () => ipcRenderer.send('hide-window'),
 
   // 移除监听器
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)

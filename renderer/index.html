@@ -24,11 +24,39 @@
     </style>
   </head>
   <body>
+    <!-- 修复 WebAssembly streaming compile 的 MIME type 检查
+         Vite dev server 有时不能为 .wasm 文件返回 application/wasm，
+         此 patch 在浏览器层拦截，自动降级为 ArrayBuffer 编译，不抛出错误 -->
+    <script>
+    ;(function () {
+      var _cs = WebAssembly.compileStreaming
+      var _is = WebAssembly.instantiateStreaming
+      WebAssembly.compileStreaming = async function (source) {
+        var r = await Promise.resolve(source)
+        var ct = (r.headers && r.headers.get('content-type')) || ''
+        if (ct.indexOf('application/wasm') >= 0) return _cs(r)
+        return WebAssembly.compile(await r.arrayBuffer())
+      }
+      WebAssembly.instantiateStreaming = async function (source, imports) {
+        var r = await Promise.resolve(source)
+        var ct = (r.headers && r.headers.get('content-type')) || ''
+        if (ct.indexOf('application/wasm') >= 0) return _is(r, imports)
+        return WebAssembly.instantiate(await r.arrayBuffer(), imports)
+      }
+    })()
+    </script>
     <div id="app"></div>
     <!-- ONNX Runtime + VAD — loaded as classic scripts to avoid CJS/ESM issues -->
-    <script src="/vad/ort.min.js"></script>
-    <script>if(window.ort){window.ort.env.wasm.wasmPaths='/vad/';}</script>
-    <script src="/vad/vad.bundle.min.js"></script>
+    <script src="./vad/ort.min.js"></script>
+    <script>
+      if (window.ort) {
+        window.ort.env.wasm.numThreads = 1;
+        window.ort.env.wasm.simd = true;
+        // wasmPaths 不在这里设置，由 VoiceRecorder.vue 通过 onnxWASMBasePath 传给 MicVAD.new
+        // （vad.bundle 内部会把 ort.env.wasm.wasmPaths 覆盖为 onnxWASMBasePath 的值）
+      }
+    </script>
+    <script src="./vad/vad.bundle.min.js"></script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, session } = require('electron')
 const path = require('path')
 const { spawn } = require('child_process')
 
@@ -45,6 +45,18 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
   
+  // 兜底：确保 .wasm 文件的 MIME 类型正确（dev 和 prod 均生效）
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    if (details.url.includes('.wasm')) {
+      const headers = { ...details.responseHeaders }
+      headers['content-type'] = ['application/wasm']
+      headers['cross-origin-resource-policy'] = ['cross-origin']
+      callback({ responseHeaders: headers })
+    } else {
+      callback({ responseHeaders: details.responseHeaders })
+    }
+  })
+
   // 始终打开 DevTools 以便调试
   mainWindow.webContents.openDevTools({ mode: 'detach' })
 
@@ -100,8 +112,9 @@ function toggleWindow() {
 
 // 打开设置
 function openSettings() {
-  // TODO: 打开设置窗口
-  console.log('打开设置')
+  if (mainWindow) {
+    mainWindow.webContents.send('open-settings')
+  }
 }
 
 // 打开记忆管理面板
@@ -179,6 +192,13 @@ ipcMain.handle('set-ignore-mouse-events', (event, ignore) => {
 ipcMain.on('hide-window', () => {
   if (mainWindow) {
     mainWindow.hide()
+  }
+})
+
+// IPC 通信：关闭设置（通知渲染进程）
+ipcMain.on('close-settings', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('close-settings')
   }
 })
 

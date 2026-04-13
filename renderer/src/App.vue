@@ -1,6 +1,14 @@
 <template>
   <div class="app-container">
-    <PetCanvas ref="petCanvasRef" />
+    <!-- 根据动画模式选择渲染组件 -->
+    <PetCanvas
+      v-if="settings.animationMode === 'bone' || settings.animationMode === 'procedural'"
+      ref="petCanvasRef"
+    />
+    <SpriteCanvas
+      v-else-if="settings.animationMode === 'sprite'"
+      ref="spriteCanvasRef"
+    />
     <ChatBubble v-if="chatStore.showBubble" />
     <InputPanel v-if="uiStore.showInput" />
 
@@ -23,6 +31,9 @@
       v-if="uiStore.showMemoryPanel"
       @close="uiStore.closeMemoryPanel()"
     />
+
+    <!-- 设置面板 -->
+    <SettingsPanel v-if="uiStore.showSettings" />
   </div>
 </template>
 
@@ -30,21 +41,26 @@
 import { ref, provide, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from './stores/chat'
 import { useUiStore } from './stores/ui'
+import { useSettingsStore } from './stores/settings'
 import PetCanvas from './components/PetCanvas.vue'
+import SpriteCanvas from './components/SpriteCanvas.vue'
 import ChatBubble from './components/ChatBubble.vue'
 import InputPanel from './components/InputPanel.vue'
 import VoiceRecorder from './components/VoiceRecorder.vue'
 import VoiceManager from './components/VoiceManager.vue'
 import BreakReminderBubble from './components/BreakReminderBubble.vue'
 import MemoryPanel from './components/MemoryPanel.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
 import { useNatureMode } from './composables/useNatureMode'
 import { useBreakReminder } from './composables/useBreakReminder'
 
 const chatStore = useChatStore()
 const uiStore = useUiStore()
+const settings = useSettingsStore()
 
 // PetCanvas ref，传给 composable 以调用 transitionTo()
 const petCanvasRef = ref(null)
+const spriteCanvasRef = ref(null)
 
 // 天性模式调度器
 const { init: initNature, destroy: destroyNature } = useNatureMode(petCanvasRef)
@@ -73,6 +89,9 @@ onMounted(() => {
     })
     window.electronAPI.onOpenMemory(() => {
       uiStore.openMemoryPanel()
+    })
+    window.electronAPI.onCloseSettings(() => {
+      uiStore.closeSettings()
     })
   }
 })

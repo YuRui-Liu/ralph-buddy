@@ -96,12 +96,37 @@ async function initVAD() {
   statusText.value = "初始化中..."
   try {
     if (!window.vad?.MicVAD) throw new Error("VAD 脚本未加载，请刷新页面")
+    if (!window.ort) throw new Error("ONNX Runtime 未加载，请刷新页面")
+    
     const { MicVAD } = window.vad
+    const ort = window.ort
+
+    const isDev = window.location.protocol === 'http:'
+    const basePath = isDev ? '' : '.'
+    // onnxWASMBasePath 必须显式传入，否则 vad.bundle.min.js 内部会把 wasmPaths 覆盖为 undefined
+    const onnxWASMBasePath = isDev
+      ? `${window.location.origin}/vad/`
+      : './vad/'
+
+    // 预先 fetch WASM 二进制并写入 ort.env.wasm.wasmBinary
+    // bundle 内部检测到 wasmBinary 时直接使用，跳过 WebAssembly.compileStreaming
+    // 从而彻底消除 "Incorrect response MIME type" 警告
+    try {
+      const wasmUrl = `${onnxWASMBasePath}ort-wasm-simd-threaded.wasm`
+      const wasmBuf = await fetch(wasmUrl).then(r => r.arrayBuffer())
+      ort.env.wasm.wasmBinary = wasmBuf
+    } catch (e) {
+      console.warn('WASM 预加载失败，回退到 bundle 自动加载', e)
+    }
 
     vadInstance = await MicVAD.new({
-      workersPath: '/vad/',
-      prepath: '/',
-      model: 'silero_vad_legacy',
+      ort: ort,
+      onnxWASMBasePath,
+      modelURL: `${basePath}/vad/silero_vad_legacy.onnx`,
+      minSpeechFrames: 3,
+      maxSpeechFrames: 300,
+      positiveSpeechThreshold: 0.5,
+      negativeSpeechThreshold: 0.35,
       onSpeechStart: () => {
         console.log("🎤 检测到语音开始")
         isRecording.value = true
