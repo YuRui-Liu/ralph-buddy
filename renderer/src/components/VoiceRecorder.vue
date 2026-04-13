@@ -101,20 +101,37 @@ async function initVAD() {
     const { MicVAD } = window.vad
     const ort = window.ort
 
-    // 优先使用 Electron 提供的 file:// 路径
-    // ORT 内部 ja(b) 检测到 file:// 开头时直接跳过 streaming compile，
-    // 走 XHR/ArrayBuffer 路径，彻底消除 "Incorrect response MIME type" 报错
+    const isDev = window.location.protocol === 'http:'
+
+    // WASM 路径策略：
+    //   Electron dev 模式 → onnxWASMBasePath 用 file:// 绝对路径
+    //     ORT 内部 ja(b)=b.startsWith("file://") 为 true → 跳过 streaming compile
+    //     同时预加载 wasmBinary（HTTP fetch），ORT 的 La() 直接用 binary，不再尝试 fetch(file://)
+    //     （COEP:require-corp 会阻断跨协议 file:// fetch，这是上次 AbortError 的根因）
+    //   Electron prod / 浏览器 → 保持相对路径，file:// 页面下 Chromium 本身处理正确
     let onnxWASMBasePath
     let modelURL
-    if (window.electronAPI?.getVadBasePath) {
-      onnxWASMBasePath = await window.electronAPI.getVadBasePath()
-      // 把 file:// vad 目录路径转换为 model URL
-      modelURL = onnxWASMBasePath + 'silero_vad_legacy.onnx'
+
+    if (isDev && window.electronAPI?.getVadBasePath) {
+      onnxWASMBasePath = await window.electronAPI.getVadBasePath()  // file:// 路径
+
+      // 预加载 WASM binary（via HTTP，避免 COEP 阻断 file:// fetch）
+      // ORT La() 检测到 wasmBinary 非空时直接 instantiate，不再发起 fetch
+      try {
+        const wasmBuf = await fetch('/vad/ort-wasm-simd-threaded.wasm').then(r => r.arrayBuffer())
+        ort.env.wasm.wasmBinary = wasmBuf
+      } catch (e) {
+        // 预加载失败：onnxWASMBasePath 回退到 HTTP，避免 La() fetch(file://) 被 COEP 阻断
+        console.warn('[VAD] WASM 预加载失败，回退 HTTP 路径', e)
+        onnxWASMBasePath = `${window.location.origin}/vad/`
+      }
+
+      // modelURL 始终用 HTTP（file:// fetch 会被 COEP 阻断 → AbortError）
+      modelURL = '/vad/silero_vad_legacy.onnx'
     } else {
-      // 浏览器回退（非 Electron 环境）
-      const isDev = window.location.protocol === 'http:'
+      // prod（页面本身是 file://，相对路径即 file://） 或非 Electron 环境
       onnxWASMBasePath = isDev ? `${window.location.origin}/vad/` : './vad/'
-      modelURL = (isDev ? '' : '.') + '/vad/silero_vad_legacy.onnx'
+      modelURL = isDev ? '/vad/silero_vad_legacy.onnx' : './vad/silero_vad_legacy.onnx'
     }
 
     vadInstance = await MicVAD.new({
