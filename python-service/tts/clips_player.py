@@ -37,8 +37,10 @@ class ClipsPlayer:
             if not node:
                 return None
             path_str = random.choice(node)
-        else:
+        elif isinstance(node, str):
             path_str = node
+        else:
+            return None   # dict node with no sub_key, or unexpected type
 
         fp = self._root / path_str
         if not fp.exists():

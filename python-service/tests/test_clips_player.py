@@ -67,3 +67,33 @@ def test_has_existing(voice_dir):
 def test_has_missing(voice_dir):
     player = ClipsPlayer(voice_dir)
     assert player.has("barks.roar") is False
+
+
+def test_missing_file_on_disk_returns_none(voice_dir, tmp_path):
+    """File registered in config but deleted from disk → None."""
+    import os
+    player = ClipsPlayer(voice_dir)
+    # delete the file after player is constructed
+    os.remove(os.path.join(voice_dir, "clips", "barks", "bark_short.wav"))
+    assert player.get("barks.short") is None
+
+
+def test_bare_category_on_dict_node_returns_none(voice_dir):
+    """get('barks') where barks is a dict (not a list/string) → None."""
+    player = ClipsPlayer(voice_dir)
+    assert player.get("barks") is None
+
+
+def test_empty_list_returns_none(tmp_path):
+    """Empty list entry in config → None."""
+    (tmp_path / "clips" / "sounds").mkdir(parents=True)
+    config = {"id": "t", "clips": {"sounds": []}}
+    (tmp_path / "config.json").write_text(__import__("json").dumps(config), encoding="utf-8")
+    player = ClipsPlayer(str(tmp_path))
+    assert player.get("sounds") is None
+
+
+def test_dot_notation_on_list_category_returns_none(voice_dir):
+    """get('greetings.morning') where greetings is a list (no sub-key lookup) → None."""
+    player = ClipsPlayer(voice_dir)
+    assert player.get("greetings.morning") is None
