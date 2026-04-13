@@ -103,35 +103,22 @@ async function initVAD() {
 
     const isDev = window.location.protocol === 'http:'
 
-    // WASM 路径策略：
-    //   Electron dev 模式 → onnxWASMBasePath 用 file:// 绝对路径
-    //     ORT 内部 ja(b)=b.startsWith("file://") 为 true → 跳过 streaming compile
-    //     同时预加载 wasmBinary（HTTP fetch），ORT 的 La() 直接用 binary，不再尝试 fetch(file://)
-    //     （COEP:require-corp 会阻断跨协议 file:// fetch，这是上次 AbortError 的根因）
-    //   Electron prod / 浏览器 → 保持相对路径，file:// 页面下 Chromium 本身处理正确
-    let onnxWASMBasePath
-    let modelURL
+    // AudioWorklet 线程与主线程隔离：主线程设的 wasmBinary 在 worklet 中不可见。
+    // 因此 onnxWASMBasePath 必须保持 HTTP，worklet 内部才能正常 fetch WASM。
+    // 用 file:// 会导致 worklet fetch(file://) 被 COEP 阻断 → AbortError。
+    const onnxWASMBasePath = isDev ? `${window.location.origin}/vad/` : './vad/'
+    const modelURL = isDev ? '/vad/silero_vad_legacy.onnx' : './vad/silero_vad_legacy.onnx'
 
-    if (isDev && window.electronAPI?.getVadBasePath) {
-      onnxWASMBasePath = await window.electronAPI.getVadBasePath()  // file:// 路径
-
-      // 预加载 WASM binary（via HTTP，避免 COEP 阻断 file:// fetch）
-      // ORT La() 检测到 wasmBinary 非空时直接 instantiate，不再发起 fetch
-      try {
-        const wasmBuf = await fetch('/vad/ort-wasm-simd-threaded.wasm').then(r => r.arrayBuffer())
-        ort.env.wasm.wasmBinary = wasmBuf
-      } catch (e) {
-        // 预加载失败：onnxWASMBasePath 回退到 HTTP，避免 La() fetch(file://) 被 COEP 阻断
-        console.warn('[VAD] WASM 预加载失败，回退 HTTP 路径', e)
-        onnxWASMBasePath = `${window.location.origin}/vad/`
-      }
-
-      // modelURL 始终用 HTTP（file:// fetch 会被 COEP 阻断 → AbortError）
-      modelURL = '/vad/silero_vad_legacy.onnx'
-    } else {
-      // prod（页面本身是 file://，相对路径即 file://） 或非 Electron 环境
-      onnxWASMBasePath = isDev ? `${window.location.origin}/vad/` : './vad/'
-      modelURL = isDev ? '/vad/silero_vad_legacy.onnx' : './vad/silero_vad_legacy.onnx'
+    // 主线程预加载 WASM binary：
+    //   ORT Na() 检测到 !m（wasmBinary 非空）时跳过 streaming compile，
+    //   消除 "Incorrect response MIME type" 的 console.error
+    // 仅对主线程有效，worklet 线程由 Vite/Electron WASM MIME 头保障
+    try {
+      const wasmBuf = await fetch(onnxWASMBasePath + 'ort-wasm-simd-threaded.wasm')
+        .then(r => r.arrayBuffer())
+      ort.env.wasm.wasmBinary = wasmBuf
+    } catch (e) {
+      console.warn('[VAD] WASM 预加载失败，ORT 将回退 streaming compile', e)
     }
 
     vadInstance = await MicVAD.new({
