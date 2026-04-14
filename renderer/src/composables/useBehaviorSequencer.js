@@ -159,6 +159,79 @@ export const BEHAVIOR_SCRIPTS = {
       { type: 'prop',  value: 'zzzs',       op: 'remove' },
     ],
   },
+
+  // ─── 情绪观察 ───
+
+  // 偷看动作（由 useEmotionObserver 主动调用，不参与随机触发）
+  peek_observe: {
+    id: 'peek_observe',
+    label: '偷看',
+    cooldown: 0,
+    weight: 0,
+    steps: [
+      { type: 'pose',  value: 'alert',      duration: 300 },
+      { type: 'pose',  value: 'cute_pose',  duration: 400 },
+      { type: 'wait',  duration: 600 },
+      { type: 'pose',  value: 'idle' },
+    ],
+  },
+
+  // 情绪反应：安慰（主人难过/害怕时）
+  emotion_comfort: {
+    id: 'emotion_comfort',
+    label: '安慰主人',
+    cooldown: 0,
+    weight: 0,
+    steps: [
+      { type: 'pose',  value: 'sad',        duration: 400 },
+      { type: 'pose',  value: 'cuddle',     duration: 300 },
+      { type: 'prop',  value: 'hearts',     op: 'add' },
+      { type: 'wait',  duration: 3000 },
+      { type: 'prop',  value: 'hearts',     op: 'remove' },
+      { type: 'pose',  value: 'idle' },
+    ],
+  },
+
+  // 情绪反应：开心（主人高兴时）
+  emotion_happy_react: {
+    id: 'emotion_happy_react',
+    label: '跟着开心',
+    cooldown: 0,
+    weight: 0,
+    steps: [
+      { type: 'pose',  value: 'happy_run',  duration: 200 },
+      { type: 'prop',  value: 'hearts',     op: 'add' },
+      { type: 'wait',  duration: 2000 },
+      { type: 'prop',  value: 'hearts',     op: 'remove' },
+      { type: 'pose',  value: 'idle' },
+    ],
+  },
+
+  // 情绪反应：小心翼翼（主人生气时）
+  emotion_cautious: {
+    id: 'emotion_cautious',
+    label: '小心翼翼',
+    cooldown: 0,
+    weight: 0,
+    steps: [
+      { type: 'pose',  value: 'sad',        duration: 500 },
+      { type: 'wait',  duration: 2000 },
+      { type: 'pose',  value: 'idle' },
+    ],
+  },
+
+  // 情绪反应：好奇（主人惊讶时）
+  emotion_curious: {
+    id: 'emotion_curious',
+    label: '好奇',
+    cooldown: 0,
+    weight: 0,
+    steps: [
+      { type: 'pose',  value: 'cute_pose',  duration: 300 },
+      { type: 'wait',  duration: 1500 },
+      { type: 'pose',  value: 'idle' },
+    ],
+  },
 }
 
 // ─── Composable ──────────────────────────────────────────────
