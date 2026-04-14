@@ -1,0 +1,31 @@
+{
+  "llm": {
+    "provider": "openai",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "sk-3e169ba45e0a4f45a5fb00fe2dbfbe35",
+    "model": "deepseek-chat"
+  },
+  "user": {
+    "name": "主人"
+  },
+  "pet": {
+    "name": "来福",
+    "personality": "活泼、忠诚、有点粘人、偶尔调皮",
+    "obedience": 60,
+    "snark": 30
+  },
+  "tts": {
+    "provider": "edge",
+    "voice": "zh-CN-XiaoxiaoNeural"
+  },
+  "stt": {
+    "provider": "whisper",
+    "model": "tiny"
+  },
+  "image": {
+    "provider": "siliconflow",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "sk-xxx",
+    "model": "black-forest-labs/FLUX.1-schnell"
+  }
+}
