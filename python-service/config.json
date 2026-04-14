@@ -2,7 +2,7 @@
   "llm": {
     "provider": "openai",
     "base_url": "https://api.deepseek.com/v1",
-    "api_key": "sk-3e169ba45e0a4f45a5fb00fe2dbfbe35",
+    "api_key": "",
     "model": "deepseek-chat"
   },
   "user": {
@@ -25,7 +25,7 @@
   "image": {
     "provider": "siliconflow",
     "base_url": "https://api.siliconflow.cn/v1",
-    "api_key": "sk-xxx",
+    "api_key": "",
     "model": "black-forest-labs/FLUX.1-schnell"
   }
 }
