@@ -12,9 +12,11 @@
     <ChatBubble v-if="chatStore.showBubble" />
     <InputPanel v-if="uiStore.showInput" />
 
-    <!-- 语音录音按钮 -->
-    <div class="voice-control" v-if="!uiStore.showInput">
+    <!-- 底部控制栏 -->
+    <div class="bottom-bar" v-if="!uiStore.showInput">
+      <button class="interact-btn feed-btn" @click="doInteract('feed')" title="喂食">🍖</button>
       <VoiceRecorder />
+      <button class="interact-btn play-btn" @click="doInteract('play')" title="玩耍">🎾</button>
     </div>
 
     <!-- 语音包管理器 -->
@@ -48,6 +50,7 @@ import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from './stores/chat'
 import { useUiStore } from './stores/ui'
 import { useSettingsStore } from './stores/settings'
+import { usePetStore } from './stores/pet'
 import PetCanvas from './components/PetCanvas.vue'
 import PoseCanvas from './components/PoseCanvas.vue'
 import ChatBubble from './components/ChatBubble.vue'
@@ -66,6 +69,32 @@ import { useEmotionObserver } from './composables/useEmotionObserver'
 const chatStore = useChatStore()
 const uiStore = useUiStore()
 const settings = useSettingsStore()
+const petStore = usePetStore()
+
+async function doInteract(action) {
+  const port = await window.electronAPI?.getPythonPort?.() || 18765
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/pet/interact/${action}`, { method: 'POST' })
+    if (!res.ok) return
+    const attrs = await res.json()
+    petStore.applyAttributes(attrs)
+
+    // 触发来福动画反应
+    const canvas = activeCanvasRef.value
+    if (canvas) {
+      if (action === 'feed') {
+        chatStore.showMessage('汪！好吃好吃！', 3000)
+        if (canvas.transitionTo) canvas.transitionTo('happy_run')
+      } else if (action === 'play') {
+        chatStore.showMessage('汪汪！好好玩！', 3000)
+        if (canvas.trigger) canvas.trigger('excited')
+        else if (canvas.transitionTo) canvas.transitionTo('happy_run')
+      }
+    }
+  } catch (e) {
+    console.error(`[interact] ${action} failed:`, e)
+  }
+}
 
 // Canvas ref，传给 composable 以调用 transitionTo()
 const petCanvasRef    = ref(null)
@@ -100,6 +129,7 @@ function syncModeToMain() {
     window.electronAPI.syncModeState({
       natureMode: uiStore.natureMode,
       focusMode:  uiStore.focusMode,
+      autoVAD:    settings.autoVAD,
     })
   }
 }
@@ -135,6 +165,11 @@ onMounted(() => {
     })
     window.electronAPI.onOpenAttributes(() => {
       uiStore.openAttributesPanel()
+    })
+    window.electronAPI.onSetAutoVAD((enabled) => {
+      settings.autoVAD = enabled
+      settings.saveSettings()
+      syncModeToMain()
     })
     window.electronAPI.onCloseSettings(() => {
       uiStore.closeSettings()
@@ -180,7 +215,7 @@ onUnmounted(() => {
   background: transparent;
 }
 
-.voice-control {
+.bottom-bar {
   position: absolute;
   bottom: 6px;
   left: 50%;
@@ -188,9 +223,36 @@ onUnmounted(() => {
   z-index: 100;
   opacity: 0.7;
   transition: opacity 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.voice-control:hover {
+.bottom-bar:hover {
   opacity: 1;
+}
+
+.interact-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(102, 126, 234, 0.4);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  padding: 0;
+}
+
+.interact-btn:hover {
+  background: rgba(102, 126, 234, 0.7);
+  transform: scale(1.15);
+}
+
+.interact-btn:active {
+  transform: scale(0.95);
 }
 </style>
