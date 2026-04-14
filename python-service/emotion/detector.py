@@ -8,6 +8,7 @@ Layer 2: 视觉 LLM 深度分析（由 should_trigger_deep 判断是否升级）
 
 import io
 import time
+import numpy as np
 from typing import Optional, Callable, Awaitable
 
 # 延迟导入 DeepFace（首次调用时加载模型）
@@ -42,9 +43,17 @@ class EmotionDetector:
     async def detect(self, image_bytes: bytes) -> dict:
         _ensure_deepface()
 
+        # DeepFace 需要 numpy 数组，不接受原始 JPEG bytes
+        from PIL import Image
+        try:
+            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            img_array = np.array(img)
+        except Exception:
+            return {"has_face": False, "local": None, "deep": None, "changed": False}
+
         try:
             results = DeepFace.analyze(
-                img_path=image_bytes,
+                img_path=img_array,
                 actions=["emotion"],
                 enforce_detection=True,
                 detector_backend="opencv",

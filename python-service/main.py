@@ -31,6 +31,7 @@ from tts.embedded_engine import EmbeddedTTSEngine
 from tts.router import TTSRouter
 from tts.voice_manager import VoiceManager, get_manager
 from stt.whisper_engine import WhisperEngine
+from stt.mic_recorder import MicRecorder
 from emotion.detector import EmotionDetector
 
 # 全局实例
@@ -43,6 +44,7 @@ voice_manager: Optional[VoiceManager] = None
 attr_manager: Optional[PetAttributeManager] = None
 dream_engine: Optional[DreamEngine] = None
 emotion_detector: Optional[EmotionDetector] = None
+mic_recorder: Optional[MicRecorder] = None
 
 
 @asynccontextmanager
@@ -108,6 +110,12 @@ async def lifespan(app: FastAPI):
         local_model = None
 
     stt_engine = WhisperEngine(model_size="small", local_model_path=local_model)
+
+    # 麦克风录音器（绕过 Electron getUserMedia 限制）
+    global mic_recorder
+    mic_recorder = MicRecorder()
+    print("🎤 MicRecorder: 探测最佳麦克风设备...")
+    mic_recorder.probe_best_device()
 
     # 情绪检测器
     async def _deep_llm_call(image_bytes: bytes, local_emotion: str) -> dict:
@@ -282,7 +290,7 @@ async def detect_emotion(
           f"emotion={result['local']['emotion'] if result['local'] else 'N/A'}, "
           f"changed={result['changed']}")
 
-    if deep or (result["has_face"] and emotion_detector.should_trigger_deep(result)):
+    if result["has_face"] and (deep or emotion_detector.should_trigger_deep(result)):
         deep_result = await emotion_detector.analyze_deep(image_bytes, result)
         result["deep"] = deep_result
         if deep_result:
@@ -339,6 +347,59 @@ async def speech_to_text(
         error_detail = f"语音识别失败: {str(e)}\n{traceback.format_exc()}"
         print(f"❌ {error_detail}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ 麦克风录音 API（绕过 Electron getUserMedia） ============
+
+@app.get("/api/mic/devices")
+async def mic_devices():
+    """列出可用麦克风设备"""
+    if not mic_recorder:
+        raise HTTPException(status_code=503, detail="MicRecorder 未初始化")
+    return {"devices": mic_recorder.list_devices()}
+
+@app.post("/api/mic/start")
+async def mic_start():
+    """开始录音"""
+    if not mic_recorder:
+        raise HTTPException(status_code=503, detail="MicRecorder 未初始化")
+    if mic_recorder.is_recording:
+        return {"status": "already_recording"}
+    mic_recorder.start()
+    return {"status": "recording"}
+
+@app.post("/api/mic/stop")
+async def mic_stop():
+    """停止录音并返回 STT 结果"""
+    if not mic_recorder:
+        raise HTTPException(status_code=503, detail="MicRecorder 未初始化")
+    if not mic_recorder.is_recording:
+        return {"status": "not_recording", "text": "", "confidence": 0}
+
+    wav_bytes = mic_recorder.stop()
+    if not wav_bytes or len(wav_bytes) < 100:
+        return {"status": "empty", "text": "", "confidence": 0}
+
+    # 直接用 STT 引擎识别
+    if not stt_engine:
+        raise HTTPException(status_code=503, detail="STT 引擎未初始化")
+
+    try:
+        text, confidence = await stt_engine.transcribe(
+            wav_bytes, source_format="wav", language="zh"
+        )
+        return {"status": "ok", "text": text, "confidence": confidence}
+    except Exception as e:
+        import traceback
+        print(f"❌ 录音 STT 失败: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/mic/cancel")
+async def mic_cancel():
+    """取消录音（丢弃数据）"""
+    if mic_recorder and mic_recorder.is_recording:
+        mic_recorder.stop()  # 丢弃数据
+    return {"status": "cancelled"}
 
 
 @app.post("/api/tts")

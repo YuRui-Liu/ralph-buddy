@@ -61,6 +61,13 @@ def test_detect_no_face(detector):
 
 def test_detect_tracks_change(detector):
     """连续检测时 changed 字段应反映情绪变化"""
+    from io import BytesIO
+    from PIL import Image
+    img = Image.fromarray(np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8))
+    buf = BytesIO()
+    img.save(buf, format="JPEG")
+    image_bytes = buf.getvalue()
+
     mock_happy = [{"dominant_emotion": "happy",
                    "emotion": {"happy": 90.0, "sad": 2.0, "angry": 1.0,
                                "surprise": 2.0, "neutral": 3.0, "fear": 1.0, "disgust": 1.0}}]
@@ -70,13 +77,13 @@ def test_detect_tracks_change(detector):
 
     with patch("emotion.detector.DeepFace") as mock_df:
         mock_df.analyze.return_value = mock_happy
-        r1 = run(detector.detect(b"fake"))
+        r1 = run(detector.detect(image_bytes))
 
         mock_df.analyze.return_value = mock_happy
-        r2 = run(detector.detect(b"fake"))
+        r2 = run(detector.detect(image_bytes))
 
         mock_df.analyze.return_value = mock_sad
-        r3 = run(detector.detect(b"fake"))
+        r3 = run(detector.detect(image_bytes))
 
     assert r1["changed"] is True   # 首次检测，与 None 比较 → changed
     assert r2["changed"] is False  # happy → happy → 无变化
