@@ -23,6 +23,7 @@ from pydantic import BaseModel
 # 确保能正确导入本地模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from plugins.plugin_manager import PluginManager
 from agent.dog_agent import DogBuddyAgent
 from agent.pet_attributes import PetAttributeManager
 from agent.dream_engine import DreamEngine
@@ -47,6 +48,7 @@ dream_engine: Optional[DreamEngine] = None
 emotion_detector: Optional[EmotionDetector] = None
 dream_image_gen: Optional[DreamImageGenerator] = None
 mic_recorder: Optional[MicRecorder] = None
+plugin_manager: Optional[PluginManager] = None
 
 
 @asynccontextmanager
@@ -126,6 +128,12 @@ async def lifespan(app: FastAPI):
     mic_recorder = MicRecorder()
     print("🎤 MicRecorder: 探测最佳麦克风设备...")
     mic_recorder.probe_best_device()
+
+    # 插件管理器
+    global plugin_manager
+    if agent and agent.llm_client:
+        plugin_manager = PluginManager(agent.llm_client)
+        print("Plugin Manager ready")
 
     # 情绪检测器
     async def _deep_llm_call(image_bytes: bytes, local_emotion: str) -> dict:
@@ -412,6 +420,35 @@ async def mic_cancel():
     if mic_recorder and mic_recorder.is_recording:
         mic_recorder.stop()  # 丢弃数据
     return {"status": "cancelled"}
+
+
+@app.post("/api/plugin/chat")
+async def plugin_chat(request: Request):
+    if not plugin_manager:
+        raise HTTPException(status_code=503, detail="PluginManager not initialized")
+    body = await request.json()
+    plugin_id = body.get("plugin_id", "unknown")
+    message = body.get("message", "")
+    session_id = body.get("session_id", "default")
+    llm_config = body.get("llm_config", {})
+    if not message:
+        raise HTTPException(status_code=400, detail="message required")
+    try:
+        result = await plugin_manager.chat(plugin_id, message, session_id, llm_config)
+        return result
+    except Exception as e:
+        import traceback
+        print(f"[plugin/chat] error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/plugin/session/clear")
+async def plugin_session_clear(request: Request):
+    if not plugin_manager:
+        raise HTTPException(status_code=503, detail="PluginManager not initialized")
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    plugin_manager.clear_session(session_id)
+    return {"status": "ok"}
 
 
 @app.post("/api/tts")
