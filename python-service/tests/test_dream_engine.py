@@ -176,8 +176,11 @@ def test_dream_records_event(engine):
     ).fetchone()
     assert row is not None
     assert row["importance"] == 3
-    assert row["content"].startswith("【做梦】")
-    assert "来福梦到和主人一起散步" in row["content"]
+    # 新格式：JSON 存储
+    import json
+    data = json.loads(row["content"])
+    assert data["type"] == "dream"
+    assert "来福梦到和主人一起散步" in data["text"]
 
 
 def test_dream_sets_last_dream_time(engine):

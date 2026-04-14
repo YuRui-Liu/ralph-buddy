@@ -28,15 +28,22 @@ COMPRESS_BATCH = 12   # 一次压缩的对话条数（6 轮），agent 在 short
 
 
 def build_compress_prompt(conv_text: str) -> str:
-    """构建记忆压缩 prompt，包含来福视角摘要字段。"""
+    """构建记忆压缩 prompt，包含来福视角摘要 + 性格漂移字段。"""
     return (
-        "请对以下对话做三件事，返回纯 JSON（不要包含 markdown 代码块）：\n"
+        "请对以下对话做四件事，返回纯 JSON（不要包含 markdown 代码块）：\n"
         "1. summary: 用2-3句话概括对话内容\n"
         "2. facts: 提取用户关键信息（姓名、爱好、情绪、重要事件等，key用中文）\n"
         "3. laifu_note: 用来福（狗）的第一人称视角，写一句话总结这段对话中来福最在意的事。"
-        "例如：\"主人今天好像很累，我想让他早点休息\"\n\n"
+        "例如：\"主人今天好像很累，我想让他早点休息\"\n"
+        "4. personality_drift: 根据这段对话的内容和氛围，判断来福的性格应该如何微调。"
+        "每个值在 -3 到 +3 之间，0 表示不变。规则：\n"
+        "  - snark（毒舌值）：主人经常开玩笑/吐槽 → 来福学会犀利 (+)；主人温柔体贴 → 来福变乖 (-)\n"
+        "  - obedience（顺从度）：主人耐心教导/表扬 → 更听话 (+)；主人放纵/不管 → 更任性 (-)\n"
+        "  - affection（亲密度）：聊得开心/分享心事 → 更亲近 (+)；冷淡/吵架 → 疏远 (-)\n"
+        "  - 如果对话没有明显的性格影响倾向，所有值填 0\n\n"
         f"对话内容：\n{conv_text}\n\n"
-        '返回格式：{"summary": "...", "facts": [{"key": "...", "value": "..."}], "laifu_note": "..."}'
+        '返回格式：{"summary": "...", "facts": [{"key": "...", "value": "..."}], '
+        '"laifu_note": "...", "personality_drift": {"snark": 0, "obedience": 0, "affection": 0}}'
     )
 
 
@@ -209,14 +216,16 @@ class MemorySystem:
     #  摘要压缩 + 用户画像提取（由 agent 在对话轮数达阈值时触发）              #
     # ------------------------------------------------------------------ #
 
-    async def compress_and_extract(self, llm_caller):
+    async def compress_and_extract(self, llm_caller, on_personality_drift=None):
         """
         取最旧 12 条短期记忆（6 轮），单次 LLM 调用完成：
           1. 生成对话摘要 → 存 SQLite conversations (is_summary=1)
           2. 提取用户画像事实 → upsert SQLite user_profile
           3. 摘要向量化 → Chroma（后台）
+          4. 性格漂移 → 回调 on_personality_drift（如果有）
 
         llm_caller: async (prompt: str) -> str
+        on_personality_drift: Optional[Callable[[dict], None]] — 接收 {"snark": ±n, ...}
         """
         if len(self.short_term) < COMPRESS_BATCH:
             return
@@ -264,6 +273,14 @@ class MemorySystem:
                         (fact["key"], fact["value"], datetime.now().isoformat()),
                     )
             self.conn.commit()
+
+            # 4. 性格漂移
+            drift = data.get("personality_drift", {})
+            if drift and on_personality_drift:
+                non_zero = {k: v for k, v in drift.items() if v != 0}
+                if non_zero:
+                    on_personality_drift(non_zero)
+                    print(f"🐕 性格漂移: {non_zero}")
 
             if self.collection:
                 combined = summary

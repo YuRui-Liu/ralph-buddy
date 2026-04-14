@@ -239,7 +239,10 @@ class DogBuddyAgent:
             await self.memory.store(user_msg, reply)
             if len(self.memory.short_term) >= self.memory.MAX_SHORT_TERM:
                 asyncio.create_task(
-                    self.memory.compress_and_extract(self._call_single_llm)
+                    self.memory.compress_and_extract(
+                        self._call_single_llm,
+                        on_personality_drift=self._apply_personality_drift,
+                    )
                 )
 
         if self.attr_manager:
@@ -284,6 +287,28 @@ class DogBuddyAgent:
     # ------------------------------------------------------------------ #
     #  工具方法                                                             #
     # ------------------------------------------------------------------ #
+
+    def _apply_personality_drift(self, drift: dict) -> None:
+        """
+        应用性格漂移（由记忆压缩时 LLM 评估）。
+
+        对话内容会逐渐塑造来福的性格：
+        - 主人经常开玩笑 → snark 上升
+        - 主人耐心教导 → obedience 上升
+        - 聊得开心 → affection 上升
+        每次变化 ±1~3，长期累积。
+        """
+        if not self.attr_manager:
+            return
+        allowed = {"snark", "obedience", "affection"}
+        for key, delta in drift.items():
+            if key not in allowed:
+                continue
+            clamped = max(-3.0, min(3.0, float(delta)))
+            if key in self.attr_manager.attrs:
+                old = self.attr_manager.attrs[key]
+                self.attr_manager.attrs[key] = max(0.0, min(100.0, old + clamped))
+        self.attr_manager.save()
 
     def _parse_action(self, reply: str) -> Optional[str]:
         match = re.search(r'\[action:(\w+)\]', reply)
