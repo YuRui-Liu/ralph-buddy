@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 敏感配置
+python-service/config.json
+python-service/.env
+*.env
+!*.env.example
+
+# 数据目录
+python-service/data/
+
+# 构建产物
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# npm 缓存
+.npm-cache/
