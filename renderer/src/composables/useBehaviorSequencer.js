@@ -141,13 +141,12 @@ export const BEHAVIOR_SCRIPTS = {
     ],
   },
 
-  // 睡前仪式（深夜）
   bedtime: {
     id: 'bedtime',
     label: '睡前仪式',
-    cooldown: 3600000,   // 1小时
+    cooldown: 3600000,
     weight: 10,
-    trigger: { timeRange: [22, 6], idleMinMs: 600000 },   // 22:00-6:00 且 10分钟无交互
+    trigger: { timeRange: [22, 6], idleMinMs: 600000 },
     steps: [
       { type: 'pose',  value: 'cute_pose',  duration: 400 },
       { type: 'bubble', text: '好困……' },
@@ -155,8 +154,23 @@ export const BEHAVIOR_SCRIPTS = {
       { type: 'pose',  value: 'sleep',      duration: 800 },
       { type: 'prop',  value: 'zzzs',       op: 'add' },
       { type: 'bubble', text: '（呼呼……）' },
-      { type: 'wait',  duration: 8000 },
+      { type: 'wait',  duration: 3000 },
+    ],
+  },
+
+  // 醒来动画（由 usePetAttributeTicker 调用，不参与随机触发）
+  wakeup: {
+    id: 'wakeup',
+    label: '醒来',
+    cooldown: 0,
+    weight: 0,
+    steps: [
       { type: 'prop',  value: 'zzzs',       op: 'remove' },
+      { type: 'pose',  value: 'cute_pose',  duration: 400 },
+      { type: 'wait',  duration: 800 },
+      { type: 'pose',  value: 'bark',       duration: 300 },
+      { type: 'wait',  duration: 500 },
+      { type: 'pose',  value: 'idle' },
     ],
   },
 
