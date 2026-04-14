@@ -11,7 +11,65 @@ import asyncio
 from typing import Optional, Any
 from datetime import datetime
 
-from agent.pet_attributes import PetAttributeManager
+from agent.pet_attributes import PetAttributeManager, _clamp
+
+
+# ── mood_shift → 属性变化映射 ──
+MOOD_SHIFT_DELTAS: dict[str, dict[str, float]] = {
+    'excited':  {'mood': +5.0, 'energy': -3.0},
+    'happy':    {'mood': +3.0, 'energy': -1.0},
+    'neutral':  {},
+    'bored':    {'mood': -2.0, 'energy': -1.0},
+    'annoyed':  {'mood': -3.0, 'snark': +1.0},
+    'sad':      {'mood': -5.0, 'affection': +2.0},
+    'worried':  {'mood': -2.0, 'affection': +3.0},
+}
+
+
+def parse_llm_response(raw: str) -> dict:
+    """Parse LLM JSON reply. Fallback to text truncation on failure."""
+    cleaned = raw.strip()
+    if cleaned.startswith('```'):
+        cleaned = cleaned.split('\n', 1)[-1] if '\n' in cleaned else cleaned[3:]
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+    if cleaned.startswith('json'):
+        cleaned = cleaned[4:].strip()
+
+    try:
+        data = json.loads(cleaned)
+        reply = str(data.get('reply', '')).strip()
+        think = str(data.get('think', '')).strip()
+        action = data.get('action')
+        mood_shift = str(data.get('mood_shift', 'neutral')).strip()
+
+        if action in (None, 'null', 'None', ''):
+            action = None
+        if mood_shift not in MOOD_SHIFT_DELTAS:
+            mood_shift = 'neutral'
+
+        if len(reply) > 80:
+            for i in range(80, max(len(reply) // 2, 1), -1):
+                if reply[i] in '。？！.?!':
+                    reply = reply[:i + 1]
+                    break
+            else:
+                reply = reply[:80]
+
+        return {'think': think, 'reply': reply, 'action': action, 'mood_shift': mood_shift}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+
+    action = None
+    match = re.search(r'\[action:(\w+)\]', raw)
+    if match:
+        action = match.group(1)
+    reply = re.sub(r'\[action:\w+\]', '', raw).strip()
+    if len(reply) > 60:
+        reply = reply[:60]
+
+    return {'think': '', 'reply': reply, 'action': action, 'mood_shift': 'neutral'}
 
 
 class DogBuddyAgent:
@@ -85,105 +143,98 @@ class DogBuddyAgent:
     # ------------------------------------------------------------------ #
 
     def _build_system_prompt(self, memories: list[str]) -> str:
-        user_name    = self.config.get('user', {}).get('name', '主人')
+        user_name = self.config.get('user', {}).get('name', '主人')
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        weekday      = ["周一","周二","周三","周四","周五","周六","周日"][datetime.now().weekday()]
+        weekday = ["周一","周二","周三","周四","周五","周六","周日"][datetime.now().weekday()]
 
-        memory_block = ""
-        if memories:
-            memory_block = "\n\n" + "\n\n".join(m for m in memories if m)
+        # Block 1: 身份核心
+        identity = (
+            f'你是来福，一只中华田园犬。你的主人叫{user_name}。\n'
+            '你不是AI助手，你是一个有血有肉的狗。\n'
+            '你有自己的情绪、记忆和脾气。你会用人话和主人交流，但思维方式是狗的——'
+            '关心吃饭睡觉玩耍，对主人的情绪很敏感，注意力容易被新鲜事吸引。\n'
+            '你聪明，能听懂主人说的大部分事情，也能给出有用的建议，'
+            '但你会用自己的方式表达，而不是像搜索引擎一样罗列答案。'
+        )
 
-        pet_name_quoted = '\u201c' + self.pet_name + '\u201d'
-
-        # ── 属性块（来自 attr_manager 或回退到配置值）──
+        # Block 2: 自我感受（属性组合）
         if self.attr_manager:
-            attr_block = '\n\n' + self.attr_manager.get_prompt_hints()
-            ob = int(self.attr_manager.attrs.get('obedience', self._cfg_obedience))
-            sn = int(self.attr_manager.attrs.get('snark', self._cfg_snark))
+            awareness = self.attr_manager.build_self_awareness()
         else:
-            attr_block = ''
-            ob = self._cfg_obedience
-            sn = self._cfg_snark
+            awareness = '你精神还不错，心情一般。'
+        feeling_block = f'\n\n【你现在的感受】\n{awareness}'
 
-        # ── 顺从度 & 毒舌值 语气引导 ──
-        if ob >= 70:
-            obedience_hint = '你非常听话，主人的指令你会积极响应，偶尔撒娇但不会违抗。'
-        elif ob >= 40:
-            obedience_hint = '你有时听话有时任性，偶尔会装没听见主人的指令，或者故意做些调皮的事。'
-        else:
-            obedience_hint = '你非常任性，经常无视主人的指令，喜欢自作主张、搞破坏，让主人又好气又好笑。'
+        # Block 3: 记忆上下文
+        memory_block = ''
+        if memories:
+            mem_lines = '\n'.join(f'- {m}' for m in memories if m)
+            if mem_lines:
+                memory_block = f'\n\n【你记得的事】\n{mem_lines}'
 
-        if sn >= 70:
-            snark_hint = '你说话犀利直白，经常调侃和吐槽主人，但如果和主人关系亲密，毒舌中会带着撒娇和宠溺感。'
-        elif sn >= 40:
-            snark_hint = '你偶尔会调侃主人几句，但大部分时候还是温和可爱的语气。'
-        else:
-            snark_hint = '你说话温柔腼腆，很少吐槽主人，语气软糯乖巧。'
+        # Block 4: 回复规则
+        rules = (
+            '\n\n【回复规则】\n'
+            '用 JSON 格式回复，包含 4 个字段：\n'
+            '{\n'
+            '  "think": "你的内心想法（主人看不到）",\n'
+            '  "reply": "你说出口的话",\n'
+            '  "action": "动作标签或null",\n'
+            '  "mood_shift": "情绪变化"\n'
+            '}\n\n'
+            '- reply 不超过 30 字，最多 2 句话。主人问具体问题时可到 80 字。\n'
+            '- 不要在 reply 里重复主人的话。\n'
+            '- 不要无意义地加"汪~"。只在真的兴奋或撒娇时才用语气词。\n'
+            '- 如果主人问你问题，认真回答，给出你的看法。你是聪明的狗，不是傻狗。\n'
+            '- 如果你不懂，说不懂，但可以猜或者问主人。\n'
+            '- action 可选值：happy_run, cuddle, bark, sad, excited, sleep, null\n'
+            '- mood_shift 可选值：excited, happy, neutral, bored, annoyed, sad, worried\n'
+            '- 只返回 JSON，不要在 JSON 外写任何文字。'
+        )
 
-        # ── 主人情绪上下文（由情绪检测系统注入）──
+        # Block 5: 情绪上下文（可选）
         emotion_block = ''
         if self.owner_emotion_context:
             emotion_block = (
-                '\n\n【主人当前状态】\n'
-                f'你刚刚偷偷看了主人一眼，观察到：{self.owner_emotion_context}\n'
-                '请根据观察到的情绪自然地调整你的语气和行为，'
-                '但不要直接说"我检测到你很难过"这种机械的话。'
-                '像一只敏感的狗狗那样，用行动和关心来回应。'
+                f'\n\n【你刚偷看了主人一眼】\n{self.owner_emotion_context}'
             )
 
-        return (
-            f'你是一只名为{pet_name_quoted}的柯基犬，你的主人叫{user_name}。\n\n'
-            f'你的性格特点：{self.pet_personality}。\n\n'
-            f'顺从度 {ob}/100：{obedience_hint}\n'
-            f'毒舌值 {sn}/100：{snark_hint}\n\n'
-            '你说话时经常带着\u201c汪\u201d、\u201c呜\u201d、\u201c嗷\u201d等拟声词，语气可爱活泼。'
-            '说话简短自然，像真实的狗狗一样，不要太长。\n\n'
-            f'当前时间：{current_time}，今天是{weekday}。'
-            f'{attr_block}'
-            f'{memory_block}'
-            f'{emotion_block}\n\n'
-            '请用符合柯基犬人设的方式回应主人的话。'
-            '如果主人说的话让你感到开心，可以在回复中包含 [action:happy_run]。'
-            '如果主人心情不好，可以蹭蹭他（包含 [action:cuddle]）。\n\n'
-            '记住：你是一只真实的、有感情的狗狗，不是 AI 助手。'
-        )
+        # 时间上下文
+        time_block = f'\n\n当前时间：{current_time}，{weekday}。'
+
+        return identity + feeling_block + memory_block + rules + emotion_block + time_block
 
     # ------------------------------------------------------------------ #
     #  核心对话                                                             #
     # ------------------------------------------------------------------ #
 
     async def chat(self, user_msg: str) -> dict[str, Any]:
-        """
-        处理对话：RAG 检索 + 多轮历史注入 → LLM → 存储 → 按需压缩
-        """
-        # 1. 检索相关记忆（向量 + 用户画像）
+        """处理对话：RAG 检索 + 多轮历史 → LLM (JSON) → 后处理 → 存储"""
         memories = await self.memory.retrieve_relevant(user_msg) if self.memory else []
-
-        # 2. 获取最近 6 轮短期历史
         history = self.memory.get_recent_history(n_turns=6) if self.memory else []
 
-        # 3. 构建完整消息列表
         messages = [
             {"role": "system", "content": self._build_system_prompt(memories)},
             *history,
             {"role": "user", "content": user_msg},
         ]
 
-        # 4. 调用 LLM
         if self.llm_client and self.llm_ready:
             try:
                 raw_reply = await self._call_llm_with_messages(messages)
             except Exception as e:
-                print(f"LLM 调用失败: {e}")
+                print(f"LLM call failed: {e}")
                 raw_reply = self._fallback_reply(user_msg)
         else:
             raw_reply = self._fallback_reply(user_msg)
 
-        # 5. 解析动作标签
-        action = self._parse_action(raw_reply)
-        reply  = re.sub(r'\[action:\w+\]', '', raw_reply).strip()
+        parsed = parse_llm_response(raw_reply)
+        reply = parsed['reply']
+        action = parsed['action']
+        mood_shift = parsed['mood_shift']
 
-        # 6. 存储 + 按需触发摘要压缩
+        if parsed['think']:
+            print(f"[laifu-think] {parsed['think']}")
+
         if self.memory:
             await self.memory.store(user_msg, reply)
             if len(self.memory.short_term) >= self.memory.MAX_SHORT_TERM:
@@ -191,12 +242,18 @@ class DogBuddyAgent:
                     self.memory.compress_and_extract(self._call_single_llm)
                 )
 
-        # 应用互动属性变化
         if self.attr_manager:
-            self.attr_manager.apply_interaction('chat')
+            deltas = MOOD_SHIFT_DELTAS.get(mood_shift, {})
+            if deltas:
+                for k, v in deltas.items():
+                    if k in self.attr_manager.attrs:
+                        self.attr_manager.attrs[k] = _clamp(self.attr_manager.attrs[k] + v)
+            self.attr_manager.attrs['affection'] = _clamp(
+                self.attr_manager.attrs.get('affection', 50) + 1.5
+            )
             self.attr_manager.save()
 
-        return {"reply": reply, "emotion": "happy", "action": action}
+        return {"reply": reply, "emotion": mood_shift, "action": action}
 
     # ------------------------------------------------------------------ #
     #  LLM 调用                                                             #
@@ -207,8 +264,8 @@ class DogBuddyAgent:
         response = await self.llm_client.chat.completions.create(
             model=self.config['llm']['model'],
             messages=messages,
-            temperature=0.8,
-            max_tokens=200,
+            temperature=0.75,
+            max_tokens=300,
         )
         return response.choices[0].message.content
 
