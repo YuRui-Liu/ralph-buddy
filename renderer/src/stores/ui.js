@@ -11,6 +11,8 @@ export const useUiStore = defineStore('ui', () => {
   const petScale = ref(1) // 0.8 | 1 | 1.2
   const showBreakReminder = ref(false)
   const showMemoryPanel = ref(false)
+  const showAttributesPanel = ref(false)
+  const showDreamDiary = ref(false)
   const breakReminderSnoozeCount = ref(0)
 
   // 方法
@@ -70,6 +72,22 @@ export const useUiStore = defineStore('ui', () => {
     showMemoryPanel.value = false
   }
 
+  function openAttributesPanel() {
+    showAttributesPanel.value = true
+  }
+
+  function closeAttributesPanel() {
+    showAttributesPanel.value = false
+  }
+
+  function openDreamDiary() {
+    showDreamDiary.value = true
+  }
+
+  function closeDreamDiary() {
+    showDreamDiary.value = false
+  }
+
   return {
     showInput,
     showSettings,
@@ -94,5 +112,11 @@ export const useUiStore = defineStore('ui', () => {
     showMemoryPanel,
     openMemoryPanel,
     closeMemoryPanel,
+    showAttributesPanel,
+    openAttributesPanel,
+    closeAttributesPanel,
+    showDreamDiary,
+    openDreamDiary,
+    closeDreamDiary,
   }
 })

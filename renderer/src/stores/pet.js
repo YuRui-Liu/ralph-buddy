@@ -46,6 +46,10 @@ export const usePetStore = defineStore('pet', () => {
     consecutiveNeg: 0,
   })
 
+  // 梦境状态
+  const dreamResult = ref(null)       // { text, imageSrc, attributeDeltas }
+  const showDreamBubble = ref(false)
+
   // 计算属性
   const isSleepy = computed(() => {
     const idleTime = Date.now() - lastInteraction.value
@@ -120,5 +124,7 @@ export const usePetStore = defineStore('pet', () => {
     applyAttributes,
     getRandomBehavior,
     emotionObserver,
+    dreamResult,
+    showDreamBubble,
   }
 })
