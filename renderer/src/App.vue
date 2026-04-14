@@ -32,6 +32,12 @@
       @close="uiStore.closeMemoryPanel()"
     />
 
+    <!-- 属性面板 -->
+    <AttributesPanel
+      v-if="uiStore.showAttributesPanel"
+      @close="uiStore.closeAttributesPanel()"
+    />
+
     <!-- 设置面板 -->
     <SettingsPanel v-if="uiStore.showSettings" />
   </div>
@@ -50,10 +56,12 @@ import VoiceRecorder from './components/VoiceRecorder.vue'
 import VoiceManager from './components/VoiceManager.vue'
 import BreakReminderBubble from './components/BreakReminderBubble.vue'
 import MemoryPanel from './components/MemoryPanel.vue'
+import AttributesPanel from './components/AttributesPanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import { useNatureMode } from './composables/useNatureMode'
 import { useBreakReminder } from './composables/useBreakReminder'
 import { usePetAttributeTicker } from './composables/usePetAttributeTicker'
+import { useEmotionObserver } from './composables/useEmotionObserver'
 
 const chatStore = useChatStore()
 const uiStore = useUiStore()
@@ -79,12 +87,27 @@ const { init: initNature, destroy: destroyNature } = useNatureMode(activeCanvasP
 const { init: initBreak, destroy: destroyBreak, confirm: breakConfirm, snooze: breakSnooze } = useBreakReminder(activeCanvasProxy)
 provide('breakReminder', { confirm: breakConfirm, snooze: breakSnooze })
 
+// 情绪观察（需要行为序列器，目前先传 null，PoseCanvas 挂载后注入）
+const emotionObserver = useEmotionObserver(null, chatStore)
+provide('emotionObserver', emotionObserver)
+
 // 属性定时同步 & 做梦
 const { init: initAttrTicker, destroy: destroyAttrTicker } = usePetAttributeTicker()
+
+// 同步模式状态到主进程（右键菜单 checkbox 需要）
+function syncModeToMain() {
+  if (window.electronAPI?.syncModeState) {
+    window.electronAPI.syncModeState({
+      natureMode: uiStore.natureMode,
+      focusMode:  uiStore.focusMode,
+    })
+  }
+}
 
 onMounted(() => {
   initNature()
   initBreak()
+  emotionObserver.init()
   initAttrTicker()
 
   // Electron 事件监听
@@ -97,16 +120,28 @@ onMounted(() => {
     })
     window.electronAPI.onToggleFocusMode(() => {
       uiStore.toggleFocusMode()
+      syncModeToMain()
+    })
+    window.electronAPI.onSetFocusMode((enabled) => {
+      uiStore.focusMode = enabled
+      syncModeToMain()
     })
     window.electronAPI.onToggleNatureMode((enabled) => {
       uiStore.setNatureMode(enabled)
+      syncModeToMain()
     })
     window.electronAPI.onOpenMemory(() => {
       uiStore.openMemoryPanel()
     })
+    window.electronAPI.onOpenAttributes(() => {
+      uiStore.openAttributesPanel()
+    })
     window.electronAPI.onCloseSettings(() => {
       uiStore.closeSettings()
     })
+    // 初始同步模式状态到主进程
+    syncModeToMain()
+
     window.electronAPI.onTriggerBehavior((behaviorId) => {
       const canvas = activeCanvasRef.value
       if (!canvas) return
@@ -129,6 +164,7 @@ onMounted(() => {
 onUnmounted(() => {
   destroyNature()
   destroyBreak()
+  emotionObserver.destroy()
   destroyAttrTicker()
   if (window.electronAPI) {
     window.electronAPI.removeAllAppListeners()
@@ -146,9 +182,15 @@ onUnmounted(() => {
 
 .voice-control {
   position: absolute;
-  bottom: 20px;
+  bottom: 6px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.voice-control:hover {
+  opacity: 1;
 }
 </style>
