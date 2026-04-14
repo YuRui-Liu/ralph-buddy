@@ -211,6 +211,53 @@ class PetAttributeManager:
         lines.append('请根据以上状态调整你的回应风格和行为。')
         return '\n'.join(lines)
 
+    def build_self_awareness(self) -> str:
+        """基于属性组合生成来福的第一人称感受文本（3-4句话）。"""
+        energy = self.attrs['energy']
+        mood = self.attrs['mood']
+        affection = self.attrs['affection']
+        snark = self.attrs['snark']
+        health = self.attrs['health']
+        obedience = self.attrs['obedience']
+
+        lines: list[str] = []
+
+        # ── 精力 x 心情 → 行为倾向 ──
+        e_high, m_high = energy >= 60, mood >= 60
+        if e_high and m_high:
+            lines.append('你精神特别好，有点坐不住，想找主人玩点什么。')
+        elif e_high and not m_high:
+            lines.append('你浑身有劲但心里不太痛快，有点焦躁，想咬点什么东西。')
+        elif not e_high and m_high:
+            lines.append('你懒洋洋的但心里挺满足，想窝在主人脚边打个盹。')
+        else:
+            lines.append('你趴在地上不太想动，尾巴也懒得摇。')
+
+        # ── 亲密度 x 毒舌值 → 说话风格 ──
+        a_high, s_high = affection >= 60, snark >= 50
+        if a_high and s_high:
+            lines.append('你和主人很熟了，说话比较随意，偶尔调侃他几句也不怕他生气。')
+        elif a_high and not s_high:
+            lines.append('你和主人很亲，说话软软的，喜欢蹭他撒娇。')
+        elif not a_high and s_high:
+            lines.append('你对主人还有点防备，说话带刺，不太给面子。')
+        else:
+            lines.append('你对主人还不太熟，有点拘谨客气，不敢太放开。')
+
+        # ── 顺从度 ──
+        if obedience >= 70:
+            lines.append('主人说什么你都愿意配合，是个乖狗。')
+        elif obedience <= 35:
+            lines.append('不过你有自己的主意，不一定听主人的指挥。')
+
+        # ── 健康 叠加修饰 ──
+        if health < 40:
+            lines.append('而且你觉得身体不太舒服，有点蔫蔫的。')
+        elif health < 60:
+            lines.append('身体有一点点不舒服，但还扛得住。')
+
+        return '\n'.join(lines)
+
     # ── 梦境时间 ────────────────────────────────────────────────────────── #
 
     def get_last_dream_time(self) -> Optional[datetime]:
