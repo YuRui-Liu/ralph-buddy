@@ -1,7 +1,12 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, session } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, globalShortcut } = require('electron')
 const path = require('path')
 const { pathToFileURL } = require('url')
 const { spawn } = require('child_process')
+
+// 修复 Intel 智音技术 (SST) 麦克风在 Chromium 音频沙箱下 muted=true 的问题
+// 必须在 app.whenReady() 之前调用
+app.commandLine.appendSwitch('disable-features', 'AudioServiceSandbox')
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream')  // 跳过权限弹窗，直接授权
 
 // 保持窗口和托盘的全局引用
 let mainWindow = null
@@ -12,9 +17,9 @@ let pythonProcess = null
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
   
-  // 窗口尺寸
-  const windowWidth = 400
-  const windowHeight = 400
+  // 窗口尺寸 - 只包裹宠物本身，不要多余空白
+  const windowWidth = 280
+  const windowHeight = 320
   
   // 初始位置：屏幕右下角
   const x = width - windowWidth - 20
@@ -61,10 +66,81 @@ function createWindow() {
   // 始终打开 DevTools 以便调试
   mainWindow.webContents.openDevTools({ mode: 'detach' })
 
+  // 当前模式状态（由渲染进程同步过来）
+  let currentNatureMode = true
+  let currentFocusMode  = false
+  let currentAutoVAD    = true
+
+  ipcMain.on('sync-mode-state', (event, { natureMode, focusMode, autoVAD }) => {
+    currentNatureMode = natureMode
+    currentFocusMode  = focusMode
+    if (autoVAD !== undefined) currentAutoVAD = autoVAD
+  })
+
   // 右键菜单（直接右键来福）
   mainWindow.webContents.on('context-menu', () => {
     Menu.buildFromTemplate([
-      { label: '🧠 记忆管理', click: openMemoryPanel },
+      {
+        label: '来福特技',
+        submenu: [
+          { label: '戴眼镜学究',   click: () => mainWindow.webContents.send('trigger-behavior', 'scholar') },
+          { label: '拿放大镜侦探', click: () => mainWindow.webContents.send('trigger-behavior', 'investigate') },
+          { label: '谄媚讨好',     click: () => mainWindow.webContents.send('trigger-behavior', 'flatter') },
+          { label: '舔屏',         click: () => mainWindow.webContents.send('trigger-behavior', 'lickScreen') },
+          { label: '撒尿',         click: () => mainWindow.webContents.send('trigger-behavior', 'pee') },
+          { label: '难过',         click: () => mainWindow.webContents.send('trigger-behavior', 'sad') },
+          { label: '睡前仪式',     click: () => mainWindow.webContents.send('trigger-behavior', 'bedtime') },
+        ]
+      },
+      { type: 'separator' },
+      { label: '宠物属性', click: () => mainWindow.webContents.send('open-attributes') },
+      { type: 'separator' },
+      {
+        label: '天性模式',
+        type: 'checkbox',
+        checked: currentNatureMode,
+        click: (menuItem) => {
+          // 天性模式和专注模式互斥
+          if (menuItem.checked) {
+            currentNatureMode = true
+            currentFocusMode  = false
+            mainWindow.webContents.send('toggle-nature-mode', true)
+            mainWindow.webContents.send('set-focus-mode', false)
+          } else {
+            currentNatureMode = false
+            mainWindow.webContents.send('toggle-nature-mode', false)
+          }
+        }
+      },
+      {
+        label: '专注模式',
+        type: 'checkbox',
+        checked: currentFocusMode,
+        click: (menuItem) => {
+          if (menuItem.checked) {
+            currentFocusMode  = true
+            currentNatureMode = false
+            mainWindow.webContents.send('set-focus-mode', true)
+            mainWindow.webContents.send('toggle-nature-mode', false)
+          } else {
+            currentFocusMode = false
+            mainWindow.webContents.send('set-focus-mode', false)
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '语音自动检测',
+        type: 'checkbox',
+        checked: currentAutoVAD,
+        click: (menuItem) => {
+          currentAutoVAD = menuItem.checked
+          mainWindow.webContents.send('set-auto-vad', menuItem.checked)
+        }
+      },
+      { type: 'separator' },
+      { label: '梦境日记', click: () => mainWindow.webContents.send('open-dream-diary') },
+      { label: '记忆管理', click: openMemoryPanel },
       { type: 'separator' },
       { label: '显示/隐藏', click: toggleWindow },
       { label: '退出', click: quitApp }
@@ -169,13 +245,40 @@ function quitApp() {
   app.quit()
 }
 
-// IPC 通信：移动窗口
-ipcMain.on('move-window', (event, { x, y }) => {
-  if (mainWindow) {
-    const [currentX, currentY] = mainWindow.getPosition()
-    mainWindow.setPosition(currentX + x, currentY + y)
+// 拖拽状态（主进程侧轮询光标位置，整个拖拽过程零额外 IPC）
+let dragOffset = null
+
+// IPC 通信：开始拖拽（渲染进程只需调用一次）
+// 直接用屏幕坐标计算偏移，避免 CSS 像素与物理像素的 DPI 缩放不一致
+ipcMain.on('start-drag', () => {
+  if (!mainWindow) return
+  const [winX, winY] = mainWindow.getPosition()
+  const cursor = screen.getCursorScreenPoint()
+  dragOffset = {
+    x: cursor.x - winX,
+    y: cursor.y - winY,
+    width: mainWindow.getBounds().width,
+    height: mainWindow.getBounds().height,
   }
 })
+
+// IPC 通信：结束拖拽
+ipcMain.on('stop-drag', () => {
+  dragOffset = null
+})
+
+// 高频轮询：拖拽期间每帧读取光标位置并移动窗口
+// 注意：Windows 透明窗口上 setPosition 会导致尺寸被 DWM 撑大，
+// 必须每次移动后强制 setSize 恢复原始尺寸
+function updateDrag() {
+  if (dragOffset && mainWindow) {
+    const cursor = screen.getCursorScreenPoint()
+    mainWindow.setPosition(cursor.x - dragOffset.x, cursor.y - dragOffset.y)
+    mainWindow.setSize(dragOffset.width, dragOffset.height)
+  }
+  setImmediate(updateDrag)
+}
+setImmediate(updateDrag)
 
 // IPC 通信：获取 Python 端口
 ipcMain.handle('get-python-port', () => {
@@ -194,11 +297,9 @@ ipcMain.handle('get-vad-base-path', () => {
   return pathToFileURL(vadDir).href + '/'
 })
 
-// IPC 通信：设置鼠标穿透
+// IPC 通信：设置鼠标穿透（已禁用穿透功能，仅保留 no-op 以防调用崩溃）
 ipcMain.handle('set-ignore-mouse-events', (event, ignore) => {
-  if (mainWindow) {
-    mainWindow.setIgnoreMouseEvents(ignore, { forward: true })
-  }
+  // 不做任何操作——穿透功能已移除
 })
 
 // IPC 通信：隐藏窗口
@@ -217,14 +318,32 @@ ipcMain.on('close-settings', () => {
 
 // 应用就绪
 app.whenReady().then(() => {
+  // 显式授权麦克风 / 摄像头等媒体权限
+  // Electron 默认可能拦截 getUserMedia，导致返回"活跃但无数据"的流
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'audioCapture', 'microphone', 'camera']
+    callback(allowed.includes(permission))
+  })
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    const allowed = ['media', 'audioCapture', 'microphone', 'camera']
+    return allowed.includes(permission)
+  })
+
   createWindow()
   createTray()
-  
+
+  // Ctrl+P 全局快捷键：切换录音（开始/停止）
+  globalShortcut.register('CommandOrControl+P', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('toggle-recording')
+    }
+  })
+
   // 只在生产模式启动 Python 服务
   if (!process.argv.includes('--dev')) {
     startPythonService()
   }
-  
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -242,6 +361,7 @@ app.on('window-all-closed', () => {
 
 // 应用退出前
 app.on('before-quit', () => {
+  globalShortcut.unregisterAll()
   if (pythonProcess) {
     pythonProcess.kill()
   }

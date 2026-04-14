@@ -40,6 +40,21 @@
       @close="uiStore.closeAttributesPanel()"
     />
 
+    <!-- 梦境气泡 -->
+    <DreamBubble
+      v-if="petStore.showDreamBubble"
+      :text="petStore.dreamResult?.text || ''"
+      :image-src="petStore.dreamResult?.imageSrc"
+      :duration="8000"
+      @dismiss="petStore.showDreamBubble = false; petStore.dreamResult = null"
+    />
+
+    <!-- 梦境日记 -->
+    <DreamDiary
+      v-if="uiStore.showDreamDiary"
+      @close="uiStore.closeDreamDiary()"
+    />
+
     <!-- 设置面板 -->
     <SettingsPanel v-if="uiStore.showSettings" />
   </div>
@@ -61,6 +76,8 @@ import BreakReminderBubble from './components/BreakReminderBubble.vue'
 import MemoryPanel from './components/MemoryPanel.vue'
 import AttributesPanel from './components/AttributesPanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
+import DreamBubble from './components/DreamBubble.vue'
+import DreamDiary from './components/DreamDiary.vue'
 import { useNatureMode } from './composables/useNatureMode'
 import { useBreakReminder } from './composables/useBreakReminder'
 import { usePetAttributeTicker } from './composables/usePetAttributeTicker'
@@ -165,6 +182,9 @@ onMounted(() => {
     })
     window.electronAPI.onOpenAttributes(() => {
       uiStore.openAttributesPanel()
+    })
+    window.electronAPI.onOpenDreamDiary(() => {
+      uiStore.openDreamDiary()
     })
     window.electronAPI.onSetAutoVAD((enabled) => {
       settings.autoVAD = enabled
