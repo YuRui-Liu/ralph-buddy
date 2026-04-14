@@ -28,6 +28,7 @@ class DogBuddyAgent:
         # Fallback ob/sn used when attr_manager is None (or for direct override via API)
         self._cfg_obedience  = pet_cfg.get('obedience', 60)   # 0-100 顺从度
         self._cfg_snark      = pet_cfg.get('snark', 30)       # 0-100 毒舌值
+        self.owner_emotion_context: Optional[str] = None
 
     # ── Backward-compat properties so main.py can still write agent.obedience ──
 
@@ -119,6 +120,17 @@ class DogBuddyAgent:
         else:
             snark_hint = '你说话温柔腼腆，很少吐槽主人，语气软糯乖巧。'
 
+        # ── 主人情绪上下文（由情绪检测系统注入）──
+        emotion_block = ''
+        if self.owner_emotion_context:
+            emotion_block = (
+                '\n\n【主人当前状态】\n'
+                f'你刚刚偷偷看了主人一眼，观察到：{self.owner_emotion_context}\n'
+                '请根据观察到的情绪自然地调整你的语气和行为，'
+                '但不要直接说"我检测到你很难过"这种机械的话。'
+                '像一只敏感的狗狗那样，用行动和关心来回应。'
+            )
+
         return (
             f'你是一只名为{pet_name_quoted}的柯基犬，你的主人叫{user_name}。\n\n'
             f'你的性格特点：{self.pet_personality}。\n\n'
@@ -128,7 +140,8 @@ class DogBuddyAgent:
             '说话简短自然，像真实的狗狗一样，不要太长。\n\n'
             f'当前时间：{current_time}，今天是{weekday}。'
             f'{attr_block}'
-            f'{memory_block}\n\n'
+            f'{memory_block}'
+            f'{emotion_block}\n\n'
             '请用符合柯基犬人设的方式回应主人的话。'
             '如果主人说的话让你感到开心，可以在回复中包含 [action:happy_run]。'
             '如果主人心情不好，可以蹭蹭他（包含 [action:cuddle]）。\n\n'
