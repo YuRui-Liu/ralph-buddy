@@ -55,14 +55,27 @@ class EmotionDetector:
             results = DeepFace.analyze(
                 img_path=img_array,
                 actions=["emotion"],
-                enforce_detection=True,
+                enforce_detection=False,
                 detector_backend="opencv",
                 silent=True,
             )
-        except (ValueError, AttributeError):
+        except Exception as e:
+            print(f"⚠️ DeepFace.analyze 异常: {type(e).__name__}: {e}")
             return {"has_face": False, "local": None, "deep": None, "changed": False}
 
         face = results[0] if isinstance(results, list) else results
+
+        # enforce_detection=False 时，检查 face_confidence 判断是否真的检测到人脸
+        # confidence=0 表示未检测到人脸，DeepFace 退化为分析整张图
+        face_confidence = face.get("face_confidence", 0)
+        region = face.get("region", {})
+        region_area = region.get("w", 0) * region.get("h", 0)
+        img_area = img_array.shape[0] * img_array.shape[1]
+
+        # 如果置信度为 0 且人脸区域占整张图 >90%，说明没检测到人脸
+        if face_confidence == 0 and (region_area == 0 or region_area / max(img_area, 1) > 0.9):
+            return {"has_face": False, "local": None, "deep": None, "changed": False}
+
         emotion = face["dominant_emotion"]
         scores = face["emotion"]
 

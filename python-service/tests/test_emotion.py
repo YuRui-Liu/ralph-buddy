@@ -30,7 +30,9 @@ def test_detect_returns_result_with_face(detector):
         "emotion": {
             "happy": 85.0, "sad": 2.0, "angry": 1.0,
             "surprise": 5.0, "neutral": 5.0, "fear": 1.0, "disgust": 1.0
-        }
+        },
+        "face_confidence": 0.95,
+        "region": {"x": 10, "y": 10, "w": 50, "h": 50},
     }]
     with patch("emotion.detector.DeepFace") as mock_df:
         mock_df.analyze.return_value = mock_result
@@ -68,12 +70,15 @@ def test_detect_tracks_change(detector):
     img.save(buf, format="JPEG")
     image_bytes = buf.getvalue()
 
+    _face_meta = {"face_confidence": 0.95, "region": {"x": 10, "y": 10, "w": 50, "h": 50}}
     mock_happy = [{"dominant_emotion": "happy",
                    "emotion": {"happy": 90.0, "sad": 2.0, "angry": 1.0,
-                               "surprise": 2.0, "neutral": 3.0, "fear": 1.0, "disgust": 1.0}}]
+                               "surprise": 2.0, "neutral": 3.0, "fear": 1.0, "disgust": 1.0},
+                   **_face_meta}]
     mock_sad = [{"dominant_emotion": "sad",
                  "emotion": {"happy": 5.0, "sad": 80.0, "angry": 3.0,
-                             "surprise": 2.0, "neutral": 8.0, "fear": 1.0, "disgust": 1.0}}]
+                             "surprise": 2.0, "neutral": 8.0, "fear": 1.0, "disgust": 1.0},
+                 **_face_meta}]
 
     with patch("emotion.detector.DeepFace") as mock_df:
         mock_df.analyze.return_value = mock_happy
