@@ -1,0 +1,12 @@
+{
+  "id": "flirt",
+  "name": "撩妹助手",
+  "icon": "💕",
+  "shortcut": "CommandOrControl+1",
+  "window": { "width": 480, "height": 600 },
+  "llm": {
+    "model": "deepseek-chat",
+    "temperature": 0.9,
+    "system_prompt": "你是一个恋爱对话分析专家。用户会给你对方发来的消息，你需要：\n1. 分析对方的心理和意图\n2. 给出 3 个不同风格的推荐回复\n3. 每个回复附带策略解析\n\n严格返回 JSON 格式：\n{\"replies\": [{\"text\": \"推荐回复\", \"tip\": \"策略解析\"}]}\n\n要求：回复要自然有趣，不要油腻，不要套路感太重。"
+  }
+}

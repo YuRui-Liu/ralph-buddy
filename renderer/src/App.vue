@@ -17,6 +17,7 @@
       <button class="interact-btn feed-btn" @click="doInteract('feed')" title="喂食">🍖</button>
       <VoiceRecorder />
       <button class="interact-btn play-btn" @click="doInteract('play')" title="玩耍">🎾</button>
+      <PluginToolbar />
     </div>
 
     <!-- 语音包管理器 -->
@@ -78,6 +79,7 @@ import AttributesPanel from './components/AttributesPanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import DreamBubble from './components/DreamBubble.vue'
 import DreamDiary from './components/DreamDiary.vue'
+import PluginToolbar from './components/PluginToolbar.vue'
 import { useNatureMode } from './composables/useNatureMode'
 import { useBreakReminder } from './composables/useBreakReminder'
 import { usePetAttributeTicker } from './composables/usePetAttributeTicker'
@@ -194,6 +196,18 @@ onMounted(() => {
     window.electronAPI.onCloseSettings(() => {
       uiStore.closeSettings()
     })
+    // 插件窗口关闭时清理会话
+    if (window.electronAPI?.onPluginWindowClosed) {
+      window.electronAPI.onPluginWindowClosed(async (pluginId) => {
+        const port = await window.electronAPI?.getPythonPort?.() || 18765
+        fetch(`http://127.0.0.1:${port}/api/plugin/session/clear`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: `${pluginId}_*` })
+        }).catch(() => {})
+      })
+    }
+
     // 初始同步模式状态到主进程
     syncModeToMain()
 

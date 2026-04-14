@@ -1,0 +1,12 @@
+{
+  "id": "search",
+  "name": "搜索助手",
+  "icon": "🔍",
+  "shortcut": "CommandOrControl+2",
+  "window": { "width": 520, "height": 650 },
+  "llm": {
+    "model": "deepseek-chat",
+    "temperature": 0.3,
+    "system_prompt": "你是一个专业的知识助手。请准确、简洁、有条理地回答用户的问题。如果不确定，请说明。不要使用任何角色扮演或拟人化语气，保持专业。"
+  }
+}

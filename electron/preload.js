@@ -39,7 +39,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('close-settings')
     ipcRenderer.removeAllListeners('trigger-behavior')
     ipcRenderer.removeAllListeners('open-dream-diary')
+    ipcRenderer.removeAllListeners('open-plugin-request')
+    ipcRenderer.removeAllListeners('plugin-window-closed')
   },
+
+  // 插件系统
+  openPlugin: (pluginId, manifest) => ipcRenderer.send('open-plugin', { pluginId, manifest }),
+  registerPluginShortcuts: (plugins) => ipcRenderer.send('register-plugin-shortcuts', plugins),
+  onOpenPluginRequest: (callback) => ipcRenderer.on('open-plugin-request', (event, pluginId) => callback(pluginId)),
+  onPluginWindowClosed: (callback) => ipcRenderer.on('plugin-window-closed', (event, pluginId) => callback(pluginId)),
 
   // 来福特技触发（rhyfu 模式行为序列）
   onTriggerBehavior: (callback) => ipcRenderer.on('trigger-behavior', (event, id) => callback(id)),

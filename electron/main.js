@@ -13,6 +13,71 @@ let mainWindow = null
 let tray = null
 let pythonProcess = null
 
+// 插件窗口管理
+const pluginWindows = new Map()
+
+function openPluginWindow(pluginId, manifest) {
+  if (pluginWindows.has(pluginId)) {
+    const existing = pluginWindows.get(pluginId)
+    if (!existing.isDestroyed()) {
+      existing.focus()
+      return
+    }
+    pluginWindows.delete(pluginId)
+  }
+
+  const winCfg = manifest.window || { width: 480, height: 600 }
+  const pluginWin = new BrowserWindow({
+    width: winCfg.width,
+    height: winCfg.height,
+    title: manifest.name,
+    frame: true,
+    resizable: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'plugin-preload.js'),
+      webSecurity: false,
+    }
+  })
+
+  const isDev = process.argv.includes('--dev')
+  if (isDev) {
+    pluginWin.loadURL(`http://localhost:5173/plugin.html?id=${pluginId}`)
+  } else {
+    pluginWin.loadFile(path.join(__dirname, '../dist/plugin.html'), {
+      query: { id: pluginId }
+    })
+  }
+
+  pluginWin.on('close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('plugin-window-closed', pluginId)
+    }
+  })
+
+  pluginWin.on('closed', () => {
+    pluginWindows.delete(pluginId)
+  })
+
+  pluginWindows.set(pluginId, pluginWin)
+}
+
+ipcMain.handle('get-plugin-id', (event) => {
+  const url = event.sender.getURL()
+  const match = url.match(/[?&]id=([^&]+)/)
+  return match ? match[1] : null
+})
+
+ipcMain.on('close-plugin-window', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win) win.close()
+})
+
+ipcMain.on('open-plugin', (event, { pluginId, manifest }) => {
+  openPluginWindow(pluginId, manifest)
+})
+
 // 创建主窗口
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
@@ -139,6 +204,13 @@ function createWindow() {
         }
       },
       { type: 'separator' },
+      {
+        label: '工具箱',
+        submenu: [
+          { label: '💕 撩妹助手', click: () => mainWindow.webContents.send('open-plugin-request', 'flirt') },
+          { label: '🔍 搜索助手', click: () => mainWindow.webContents.send('open-plugin-request', 'search') },
+        ]
+      },
       { label: '梦境日记', click: () => mainWindow.webContents.send('open-dream-diary') },
       { label: '记忆管理', click: openMemoryPanel },
       { type: 'separator' },
@@ -336,6 +408,20 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+P', () => {
     if (mainWindow) {
       mainWindow.webContents.send('toggle-recording')
+    }
+  })
+
+  ipcMain.on('register-plugin-shortcuts', (event, plugins) => {
+    for (const p of plugins) {
+      if (p.shortcut) {
+        try {
+          globalShortcut.register(p.shortcut, () => {
+            openPluginWindow(p.id, p)
+          })
+        } catch (e) {
+          console.log(`[plugin] shortcut ${p.shortcut} failed:`, e.message)
+        }
+      }
     }
   })
 
