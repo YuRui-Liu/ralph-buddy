@@ -35,6 +35,17 @@ export const usePetStore = defineStore('pet', () => {
   const snark = ref(30) // 0-100 毒舌值：越高说话越犀利直白，低则温和腼腆
   const lastInteraction = ref(Date.now())
 
+  // 情绪观察状态
+  const emotionObserver = ref({
+    enabled: false,
+    lastEmotion: null,
+    lastConfidence: 0,
+    lastDeepDesc: '',
+    lastDetectTime: 0,
+    isObserving: false,
+    consecutiveNeg: 0,
+  })
+
   // 计算属性
   const isSleepy = computed(() => {
     const idleTime = Date.now() - lastInteraction.value
@@ -107,6 +118,7 @@ export const usePetStore = defineStore('pet', () => {
     stopMoving,
     updateInteraction,
     applyAttributes,
-    getRandomBehavior
+    getRandomBehavior,
+    emotionObserver,
   }
 })
