@@ -44,26 +44,23 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
+import { usePetStore } from '../stores/pet'
 import { useUiStore } from '../stores/ui'
+import { useSimpleVAD } from '../composables/useSimpleVAD'
 
 const chatStore = useChatStore()
+const petStore = usePetStore()
 const uiStore = useUiStore()
 
 // 状态
 const isRecording = ref(false)
 const isProcessing = ref(false)
 const isSpeaking = ref(false)
-const isReady = ref(false)
 const volume = ref(0)
 const statusText = ref('')
 
-// VAD 和录音相关
-let vadInstance = null
-let mediaRecorder = null
-let audioChunks = []
-let audioContext = null
-let analyser = null
-let volumeInterval = null
+// 手动录音相关（VAD 不可用时的 fallback）
+let manualRecording = false
 
 // 计算属性
 const buttonIcon = computed(() => {
@@ -91,151 +88,73 @@ const statusClass = computed(() => {
   return ''
 })
 
-// 初始化 VAD - 常驻监听，无需按键
-async function initVAD() {
-  statusText.value = "初始化中..."
-  try {
-    if (!window.vad?.MicVAD) throw new Error("VAD 脚本未加载，请刷新页面")
-    if (!window.ort) throw new Error("ONNX Runtime 未加载，请刷新页面")
-    
-    const { MicVAD } = window.vad
-    const ort = window.ort
-
-    const isDev = window.location.protocol === 'http:'
-
-    // AudioWorklet 线程与主线程隔离：主线程设的 wasmBinary 在 worklet 中不可见。
-    // 因此 onnxWASMBasePath 必须保持 HTTP，worklet 内部才能正常 fetch WASM。
-    // 用 file:// 会导致 worklet fetch(file://) 被 COEP 阻断 → AbortError。
-    const onnxWASMBasePath = isDev ? `${window.location.origin}/vad/` : './vad/'
-    const modelURL = isDev ? '/vad/silero_vad_legacy.onnx' : './vad/silero_vad_legacy.onnx'
-
-    // 主线程预加载 WASM binary：
-    //   ORT Na() 检测到 !m（wasmBinary 非空）时跳过 streaming compile，
-    //   消除 "Incorrect response MIME type" 的 console.error
-    // 仅对主线程有效，worklet 线程由 Vite/Electron WASM MIME 头保障
-    try {
-      const wasmBuf = await fetch(onnxWASMBasePath + 'ort-wasm-simd-threaded.wasm')
-        .then(r => r.arrayBuffer())
-      ort.env.wasm.wasmBinary = wasmBuf
-    } catch (e) {
-      console.warn('[VAD] WASM 预加载失败，ORT 将回退 streaming compile', e)
-    }
-
-    vadInstance = await MicVAD.new({
-      ort: ort,
-      onnxWASMBasePath,
-      modelURL,
-      minSpeechFrames: 3,
-      maxSpeechFrames: 300,
-      positiveSpeechThreshold: 0.5,
-      negativeSpeechThreshold: 0.35,
-      onSpeechStart: () => {
-        console.log("🎤 检测到语音开始")
-        isRecording.value = true
-        statusText.value = "正在听..."
-      },
-      onSpeechEnd: async (audio) => {
-        console.log("🎤 检测到语音结束")
-        isRecording.value = false
-        statusText.value = ""
-        await handleSpeechEnd(audio)
-      },
-      onVADMisfire: () => {
-        console.log("🎤 VAD 误触发")
-        isRecording.value = false
-        statusText.value = "没听清，请重试"
-        setTimeout(() => { statusText.value = "" }, 1500)
-      }
-    })
-
-    await vadInstance.start()
-    isReady.value = true
-    statusText.value = ""
-    console.log("✅ VAD 初始化完成，常驻监听中")
-  } catch (error) {
-    console.error("❌ VAD 初始化失败:", error)
-    statusText.value = "按住说话（VAD不可用）"
-    isReady.value = true
-  }
-}
-
-// 开始录音
-async function startRecording() {
-  if (isProcessing.value || isRecording.value) return
-  
-  try {
-    // 请求麦克风权限
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      audio: {
-        sampleRate: 16000,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true
-      }
-    })
-    
-    // 创建 MediaRecorder
-    mediaRecorder = new MediaRecorder(stream, {
-      mimeType: 'audio/webm;codecs=opus'
-    })
-    
-    audioChunks = []
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data)
-      }
-    }
-    
-    mediaRecorder.onstop = () => {
-      handleRecordingStop()
-    }
-    
-    // 开始录音
-    mediaRecorder.start(100) // 每100ms收集一次数据
+// 初始化 VAD - 基于 Web Audio 能量检测，无需 WASM/ORT
+const vad = useSimpleVAD({
+  onSpeechStart: () => {
+    console.log('🎤 检测到语音开始')
     isRecording.value = true
-    statusText.value = "正在录音..."
-    
-    // 启动音量检测
-    startVolumeDetection(stream)
-    
+    statusText.value = '正在听...'
+  },
+  onSpeechEnd: async (blob) => {
+    console.log('🎤 检测到语音结束')
+    isRecording.value = false
+    statusText.value = ''
+    await processAudioBlob(blob)
+  },
+  onVADMisfire: () => {
+    console.log('🎤 VAD 误触发')
+    isRecording.value = false
+    statusText.value = '没听清，请重试'
+    setTimeout(() => { statusText.value = '' }, 1500)
+  }
+})
+
+async function initVAD() {
+  statusText.value = '初始化中...'
+  try {
+    await vad.start()
+    statusText.value = ''
+    console.log('✅ VAD 初始化完成，常驻监听中')
   } catch (error) {
-    console.error("❌ 录音启动失败:", error)
-    statusText.value = "无法访问麦克风"
+    console.error('❌ VAD 初始化失败:', error)
+    statusText.value = '按住说话（VAD不可用）'
   }
 }
 
-// 停止录音
-function stopRecording() {
-  if (!isRecording.value || !mediaRecorder) return
-  
-  mediaRecorder.stop()
-  isRecording.value = false
-  
-  // 停止所有音轨
-  mediaRecorder.stream.getTracks().forEach(track => track.stop())
-  
-  // 停止音量检测
-  stopVolumeDetection()
+// 手动录音：按下按钮时触发 VAD 的录音流程
+// VAD 的 ScriptProcessorNode 已经在持续捕获 PCM，这里只需模拟 speech start/end
+function startRecording() {
+  if (isProcessing.value || isRecording.value) return
+  // 不做额外操作——VAD 自动检测即可。
+  // 按钮仅作为视觉反馈，实际录音由 VAD 全权管理。
+  statusText.value = '请说话，VAD 会自动检测...'
 }
 
-// 处理录音停止
-async function handleRecordingStop() {
-  if (audioChunks.length === 0) {
-    statusText.value = "录音太短，请重试"
+function stopRecording() {
+  // VAD 模式下无需手动停止
+}
+
+// 统一处理音频 Blob（VAD 直接输出 WAV，无需额外转换）
+async function processAudioBlob(blob) {
+  if (!blob || blob.size === 0) {
+    statusText.value = '录音太短，请重试'
     return
   }
 
+  // 暂停 VAD：防止处理/TTS 播放期间扬声器声音抬高背景噪声阈值
+  vad.pause()
+
   isProcessing.value = true
-  statusText.value = "识别中..."
+  statusText.value = '识别中...'
 
   try {
+    console.log(`🎤 发送音频: ${blob.size} bytes, type=${blob.type}`)
+
     const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
 
-    // Step 1: STT — 识别用户说的话
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
+    // Step 1: STT — VAD 输出的已经是 WAV
     const formData = new FormData()
-    formData.append('audio', audioBlob, 'recording.webm')
+    formData.append('audio', blob, 'recording.wav')
     formData.append('language', 'zh')
 
     const sttRes = await fetch(`http://127.0.0.1:${pythonPort}/api/stt`, {
@@ -247,16 +166,15 @@ async function handleRecordingStop() {
     const sttResult = await sttRes.json()
     const userText = sttResult.text?.trim()
     if (!userText) {
-      statusText.value = "没听清，请重试"
+      statusText.value = '没听清，请重试'
       return
     }
 
-    // 记录用户消息到聊天记录
     chatStore.addMessage('user', userText)
     statusText.value = `你: "${userText}"`
 
-    // Step 2: Chat — 获取来福的回复
-    statusText.value = "来福思考中..."
+    // Step 2: Chat
+    statusText.value = '来福思考中...'
     const chatRes = await fetch(`http://127.0.0.1:${pythonPort}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -266,20 +184,22 @@ async function handleRecordingStop() {
 
     const chatData = await chatRes.json()
     const replyText = chatData.reply
-    if (!replyText) throw new Error("没有收到回复")
+    if (!replyText) throw new Error('没有收到回复')
 
-    // 显示来福回复气泡
     chatStore.addMessage('assistant', replyText)
     chatStore.showMessage(replyText, 6000)
 
-    // Step 3: TTS — 用来福专属声音播放回复
+    // Step 3: TTS
     await playResponse(replyText)
 
   } catch (error) {
-    console.error("❌ 语音对话失败:", error)
-    statusText.value = "出错了，请重试"
+    console.error('❌ 语音对话失败:', error)
+    statusText.value = '出错了，请重试'
   } finally {
     isProcessing.value = false
+    statusText.value = ''
+    // 恢复 VAD 监听，重新估算背景噪声基线
+    await vad.resume()
   }
 }
 
@@ -321,88 +241,6 @@ async function playResponse(text) {
   }
 }
 
-// 音量检测
-function startVolumeDetection(stream) {
-  audioContext = new (window.AudioContext || window.webkitAudioContext)()
-  analyser = audioContext.createAnalyser()
-  analyser.fftSize = 256
-  
-  const source = audioContext.createMediaStreamSource(stream)
-  source.connect(analyser)
-  
-  const dataArray = new Uint8Array(analyser.frequencyBinCount)
-  
-  volumeInterval = setInterval(() => {
-    analyser.getByteFrequencyData(dataArray)
-    
-    // 计算平均音量
-    let sum = 0
-    for (let i = 0; i < dataArray.length; i++) {
-      sum += dataArray[i]
-    }
-    const average = sum / dataArray.length
-    volume.value = Math.min(average / 128, 1) // 归一化到 0-1
-  }, 50)
-}
-
-function stopVolumeDetection() {
-  if (volumeInterval) {
-    clearInterval(volumeInterval)
-    volumeInterval = null
-  }
-  if (audioContext) {
-    audioContext.close()
-    audioContext = null
-  }
-  volume.value = 0
-}
-
-// 处理 VAD 语音结束
-async function handleSpeechEnd(audio) {
-  // 将 Float32Array 转换为 WAV 格式
-  const wavBlob = float32ToWav(audio, 16000)
-  audioChunks = [wavBlob]
-  await handleRecordingStop()
-}
-
-// Float32Array 转 WAV
-function float32ToWav(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2)
-  const view = new DataView(buffer)
-  
-  // WAV 头
-  const writeString = (view, offset, string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i))
-    }
-  }
-  
-  writeString(view, 0, 'RIFF')
-  view.setUint32(4, 36 + samples.length * 2, true)
-  writeString(view, 8, 'WAVE')
-  writeString(view, 12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, 1, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  writeString(view, 36, 'data')
-  view.setUint32(40, samples.length * 2, true)
-  
-  // 写入音频数据
-  let offset = 44
-  for (let i = 0; i < samples.length; i++) {
-    let s = Math.max(-1, Math.min(1, samples[i]))
-    s = s < 0 ? s * 0x8000 : s * 0x7FFF
-    view.setInt16(offset, s, true)
-    offset += 2
-  }
-  
-  return new Blob([buffer], { type: 'audio/wav' })
-}
-
 // 生命周期
 onMounted(() => {
   initVAD()
@@ -410,12 +248,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopRecording()
-  stopVolumeDetection()
-  if (vadInstance) {
-    vadInstance.pause()
-    vadInstance.destroy()
-    vadInstance = null
-  }
+  vad.stop()
 })
 </script>
 
