@@ -374,9 +374,11 @@ async def mic_stop():
     if not mic_recorder:
         raise HTTPException(status_code=503, detail="MicRecorder 未初始化")
     if not mic_recorder.is_recording:
+        print("[mic/stop] not recording")
         return {"status": "not_recording", "text": "", "confidence": 0}
 
     wav_bytes = mic_recorder.stop()
+    print(f"[mic/stop] wav_bytes={len(wav_bytes) if wav_bytes else 0}")
     if not wav_bytes or len(wav_bytes) < 100:
         return {"status": "empty", "text": "", "confidence": 0}
 
@@ -629,6 +631,47 @@ async def get_pet_attributes():
     """获取当前宠物属性"""
     if not attr_manager:
         raise HTTPException(status_code=503, detail="属性系统未初始化")
+    return attr_manager.get_all()
+
+
+@app.post("/api/pet/attributes/set")
+async def set_pet_attributes(request: Request):
+    """
+    直接设置宠物属性（后门 / 调试用）
+
+    Body JSON: {"snark": 80, "obedience": 40, ...}
+    只传需要改的字段，不传的保持不变。
+    """
+    if not attr_manager:
+        raise HTTPException(status_code=503, detail="属性系统未初始化")
+    body = await request.json()
+    valid_keys = {"health", "mood", "energy", "affection", "obedience", "snark"}
+    changed = {}
+    for k, v in body.items():
+        if k in valid_keys:
+            attr_manager.attrs[k] = max(0.0, min(100.0, float(v)))
+            changed[k] = attr_manager.attrs[k]
+    attr_manager.save()
+    print(f"[pet/attributes/set] {changed}")
+    return attr_manager.get_all()
+
+
+@app.post("/api/pet/interact/{action}")
+async def pet_interact(action: str):
+    """
+    触发互动：play / feed / responded / ignored
+
+    示例: POST /api/pet/interact/play
+    """
+    if not attr_manager:
+        raise HTTPException(status_code=503, detail="属性系统未初始化")
+    from agent.pet_attributes import INTERACTION_DELTAS
+    if action not in INTERACTION_DELTAS:
+        raise HTTPException(status_code=400,
+                            detail=f"未知互动类型: {action}，可选: {list(INTERACTION_DELTAS.keys())}")
+    attr_manager.apply_interaction(action)
+    attr_manager.save()
+    print(f"[pet/interact] {action} → {attr_manager.get_all()}")
     return attr_manager.get_all()
 
 

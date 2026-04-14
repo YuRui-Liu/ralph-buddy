@@ -50,10 +50,15 @@ OFFLINE_DELTAS: dict[str, float] = {
 # ── 互动类型对应的属性变化量 ────────────────────────────────────────────── #
 INTERACTION_DELTAS: dict[str, dict[str, float]] = {
     'chat':      {'mood': +3.0, 'energy': -2.0, 'affection': +2.0},
-    'play':      {'mood': +5.0, 'energy': -5.0, 'affection': +1.0},
+    'play':      {'mood': +5.0, 'energy': -5.0, 'affection': +1.0, 'health': +2.0},
+    'feed':      {'health': +10.0, 'mood': +3.0, 'energy': +5.0, 'affection': +1.0},
     'responded': {'mood': +2.0, 'affection': +3.0, 'obedience': +1.0},
     'ignored':   {'mood': -5.0, 'affection': -2.0},
 }
+
+
+# ── 属性键列表 ──────────────────────────────────────────────────────────── #
+ATTR_KEYS: list[str] = list(DEFAULTS.keys())
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
