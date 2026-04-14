@@ -24,6 +24,7 @@
 
 <script setup>
 import { ref, nextTick } from 'vue'
+import { apiFetch } from '../../utils/api'
 
 const props = defineProps({ manifest: Object })
 
@@ -32,13 +33,7 @@ const messages = ref([])
 const loading = ref(false)
 const chatArea = ref(null)
 
-let pythonPort = 18765
 let sessionId = 'search_' + Date.now()
-
-async function init() {
-  pythonPort = await window.pluginAPI?.getPythonPort?.() || 18765
-}
-init()
 
 async function send() {
   if (!input.value.trim() || loading.value) return
@@ -49,7 +44,7 @@ async function send() {
 
   loading.value = true
   try {
-    const res = await fetch(`http://127.0.0.1:${pythonPort}/api/plugin/chat`, {
+    const res = await apiFetch('/api/plugin/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -73,7 +68,7 @@ async function send() {
 async function clearChat() {
   messages.value = []
   try {
-    await fetch(`http://127.0.0.1:${pythonPort}/api/plugin/session/clear`, {
+    await apiFetch('/api/plugin/session/clear', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId })

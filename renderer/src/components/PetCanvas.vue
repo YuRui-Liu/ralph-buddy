@@ -33,7 +33,8 @@ let modelBaseY = -1
 
 // 拖拽相关
 let isDragging = false
-let dragStart = { x: 0, y: 0 }
+
+// 鼠标穿透相关（已禁用，整个窗口均可点击）
 
 // 动画控制器
 let animationController = null
@@ -49,9 +50,9 @@ function initScene() {
   // 透明背景
   scene.background = null
 
-  // 相机
-  camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
-  camera.position.set(0, 1, 5)
+  // 相机 - 调整位置和视角以适应更小的窗口
+  camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000)
+  camera.position.set(0, 0.8, 4)
   camera.lookAt(0, 0, 0)
 
   // 渲染器 - 透明背景
@@ -305,34 +306,22 @@ function animate() {
   renderer.render(scene, camera)
 }
 
-// 拖拽处理
+
+
+// 拖拽处理（主进程轮询模式，整个拖拽只需 2 次 IPC）
 function startDrag(e) {
   if (uiStore.focusMode) return
-  
+
   isDragging = true
-  dragStart = { x: e.screenX, y: e.screenY }
-  
-  document.addEventListener('mousemove', onDrag)
+
+  window.electronAPI.startDrag()
+
   document.addEventListener('mouseup', stopDrag)
-}
-
-function onDrag(e) {
-  if (!isDragging) return
-
-  const dpr = window.devicePixelRatio || 1
-  const deltaX = Math.round((e.screenX - dragStart.x) * dpr)
-  const deltaY = Math.round((e.screenY - dragStart.y) * dpr)
-
-  if (window.electronAPI) {
-    window.electronAPI.moveWindow({ x: deltaX, y: deltaY })
-  }
-
-  dragStart = { x: e.screenX, y: e.screenY }
 }
 
 function stopDrag() {
   isDragging = false
-  document.removeEventListener('mousemove', onDrag)
+  window.electronAPI.stopDrag()
   document.removeEventListener('mouseup', stopDrag)
 }
 

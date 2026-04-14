@@ -1,6 +1,6 @@
 <template>
-  <div class="settings-overlay" @click.self="close">
-    <div class="settings-panel">
+  <div :class="standalone ? 'settings-standalone' : 'settings-overlay'" @click.self="close">
+    <div :class="standalone ? 'settings-panel-full' : 'settings-panel'">
       <!-- 头部 -->
       <div class="panel-header">
         <h2>⚙️ 设置</h2>
@@ -213,6 +213,9 @@ import { ref, computed } from 'vue'
 import { useSettingsStore, AnimationMode } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
 import { usePetStore } from '@/stores/pet'
+import { apiFetch } from '@/utils/api'
+
+const props = defineProps({ standalone: { type: Boolean, default: false } })
 
 const settings = useSettingsStore()
 const uiStore = useUiStore()
@@ -263,7 +266,6 @@ function cancelOnboarding () {
 }
 
 async function manualDetect () {
-  const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 640, height: 480, facingMode: 'user' }
@@ -283,7 +285,7 @@ async function manualDetect () {
     formData.append('image', blob, 'frame.jpg')
     formData.append('deep', 'true')
 
-    const res = await fetch(`http://127.0.0.1:${pythonPort}/api/emotion`, {
+    const res = await apiFetch('/api/emotion', {
       method: 'POST', body: formData
     })
     if (res.ok) {
@@ -374,7 +376,11 @@ function toggleFocus() {
 }
 
 function close() {
-  uiStore.closeSettings()
+  if (props.standalone) {
+    window.pluginAPI?.closeWindow()
+  } else {
+    uiStore.closeSettings()
+  }
 }
 </script>
 
@@ -401,6 +407,21 @@ function close() {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.settings-standalone {
+  width: 100%;
+  height: 100vh;
+  background: var(--bg-panel, #ffffff);
+}
+
+.settings-panel-full {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-panel, #ffffff);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .panel-header {

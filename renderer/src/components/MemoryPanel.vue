@@ -1,10 +1,10 @@
 <template>
-  <div class="memory-panel-overlay" @click.self="$emit('close')">
-    <div class="memory-panel">
+  <div :class="standalone ? 'panel-standalone' : 'memory-panel-overlay'" @click.self="close">
+    <div :class="standalone ? 'panel-full' : 'memory-panel'">
       <!-- 标题栏 -->
       <div class="panel-header">
         <span class="panel-title">🧠 来福的记忆</span>
-        <button class="close-btn" @click="$emit('close')">×</button>
+        <button class="close-btn" @click="close">×</button>
       </div>
 
       <!-- 用户画像 -->
@@ -91,10 +91,19 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { apiFetch } from '@/utils/api'
 
+const props = defineProps({ standalone: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
 
-const pythonPort = ref(18765)
+function close() {
+  if (props.standalone) {
+    window.pluginAPI?.closeWindow()
+  } else {
+    emit('close')
+  }
+}
+
 const profile    = ref({})
 const events     = ref([])
 const searchQuery   = ref('')
@@ -112,19 +121,10 @@ const profileFacts = computed(() => {
   return rest
 })
 
-// 获取端口
-async function getPort() {
-  if (window.electronAPI?.getPythonPort) {
-    pythonPort.value = await window.electronAPI.getPythonPort()
-  }
-}
-
-const base = computed(() => `http://127.0.0.1:${pythonPort.value}`)
-
 // 加载画像
 async function loadProfile() {
   try {
-    const r = await fetch(`${base.value}/api/memory/summary`)
+    const r = await apiFetch('/api/memory/summary')
     if (r.ok) profile.value = await r.json()
   } catch (e) {
     console.error('加载画像失败', e)
@@ -134,7 +134,7 @@ async function loadProfile() {
 // 加载重要记忆列表
 async function loadEvents() {
   try {
-    const r = await fetch(`${base.value}/api/memory/events`)
+    const r = await apiFetch('/api/memory/events')
     if (r.ok) {
       const data = await r.json()
       events.value = data.events
@@ -150,7 +150,7 @@ async function addMemory() {
   if (!text) return
   isLoading.value = true
   try {
-    const r = await fetch(`${base.value}/api/memory/add`, {
+    const r = await apiFetch('/api/memory/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: text, importance: 3 }),
@@ -171,7 +171,7 @@ async function addMemory() {
 async function deleteEvent(id) {
   isLoading.value = true
   try {
-    const r = await fetch(`${base.value}/api/memory/events/${id}`, { method: 'DELETE' })
+    const r = await apiFetch(`/api/memory/events/${id}`, { method: 'DELETE' })
     if (r.ok) await loadEvents()
   } catch (e) {
     console.error('删除记忆失败', e)
@@ -191,7 +191,7 @@ function debouncedSearch() {
 async function doSearch() {
   isSearching.value = true
   try {
-    const r = await fetch(`${base.value}/api/memory/search?query=${encodeURIComponent(searchQuery.value)}`)
+    const r = await apiFetch(`/api/memory/search?query=${encodeURIComponent(searchQuery.value)}`)
     if (r.ok) {
       const data = await r.json()
       searchResults.value = data.results
@@ -212,7 +212,7 @@ async function clearAll() {
   isLoading.value = true
   clearConfirming.value = false
   try {
-    await fetch(`${base.value}/api/memory/clear`, { method: 'DELETE' })
+    await apiFetch('/api/memory/clear', { method: 'DELETE' })
     profile.value = {}
     events.value  = []
     searchResults.value = []
@@ -224,7 +224,6 @@ async function clearAll() {
 }
 
 onMounted(async () => {
-  await getPort()
   await Promise.all([loadProfile(), loadEvents()])
 })
 </script>
@@ -250,6 +249,14 @@ onMounted(async () => {
   overflow-y: auto;
   padding: 0 0 16px;
   position: relative;
+}
+
+.panel-standalone {
+  width: 100%; height: 100vh; background: #fff;
+}
+.panel-full {
+  width: 100%; height: 100%; background: #fff;
+  overflow-y: auto; padding: 0 0 16px;
 }
 
 .panel-header {

@@ -10,6 +10,7 @@
 import { watch, onUnmounted } from 'vue'
 import { usePetStore } from '../stores/pet'
 import { useSettingsStore } from '../stores/settings'
+import { apiFetch } from '../utils/api'
 
 // 情绪 → 行为脚本映射
 const EMOTION_BEHAVIOR_MAP = {
@@ -74,12 +75,11 @@ export function useEmotionObserver (behaviorSequencer, chatStore) {
         return null
       }
 
-      const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
       const formData = new FormData()
       formData.append('image', blob, 'frame.jpg')
       formData.append('deep', forceDeep ? 'true' : 'false')
 
-      const res = await fetch(`http://127.0.0.1:${pythonPort}/api/emotion`, {
+      const res = await apiFetch('/api/emotion', {
         method: 'POST',
         body: formData,
       })

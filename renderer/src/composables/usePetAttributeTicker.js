@@ -4,29 +4,20 @@
 import { watch } from 'vue'
 import { usePetStore } from '../stores/pet'
 import { useChatStore } from '../stores/chat'
+import { apiFetch } from '../utils/api'
 
 const TICK_INTERVAL = 10 * 60 * 1000  // 10 minutes
 const DREAM_DELAY = 30 * 1000         // 进入睡眠 30 秒后触发做梦
 const MAX_SLEEP = 5 * 60 * 1000       // 最长睡眠 5 分钟
-const API_BASE = 'http://127.0.0.1'
 
 let tickTimer = null
 let sleepDreamTimer = null
 let sleepMaxTimer = null
-let port = 18765
 let behaviorSequencer = null  // 由外部注入
-
-async function getPort() {
-  if (window.electronAPI) {
-    port = await window.electronAPI.getPythonPort()
-  }
-  return port
-}
 
 async function fetchAttributes(petStore) {
   try {
-    const p = await getPort()
-    const res = await fetch(`${API_BASE}:${p}/api/pet/attributes`)
+    const res = await apiFetch('/api/pet/attributes')
     if (res.ok) {
       const attrs = await res.json()
       petStore.applyAttributes(attrs)
@@ -38,8 +29,7 @@ async function fetchAttributes(petStore) {
 
 async function tickAttributes(petStore) {
   try {
-    const p = await getPort()
-    const res = await fetch(`${API_BASE}:${p}/api/pet/attributes/tick`, { method: 'POST' })
+    const res = await apiFetch('/api/pet/attributes/tick', { method: 'POST' })
     if (res.ok) {
       const attrs = await res.json()
       petStore.applyAttributes(attrs)
@@ -53,10 +43,8 @@ async function tickAttributes(petStore) {
 
 async function tryDream(petStore) {
   try {
-    const p = await getPort()
-
     // Step 1: 触发做梦
-    const res = await fetch(`${API_BASE}:${p}/api/pet/dream`, { method: 'POST' })
+    const res = await apiFetch('/api/pet/dream', { method: 'POST' })
     if (!res.ok) return
     const data = await res.json()
     if (data.status !== 'success' || !data.dream_text) return
@@ -73,7 +61,7 @@ async function tryDream(petStore) {
     // Step 2: 生成梦境图片（不阻塞，失败也无所谓）
     if (data.image_prompt) {
       try {
-        const imgRes = await fetch(`${API_BASE}:${p}/api/dream/image`, {
+        const imgRes = await apiFetch('/api/dream/image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
