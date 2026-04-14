@@ -35,6 +35,7 @@ from tts.voice_manager import VoiceManager, get_manager
 from stt.whisper_engine import WhisperEngine
 from stt.mic_recorder import MicRecorder
 from emotion.detector import EmotionDetector
+from core.config import load_config, get_config, get_service_dir
 
 # 全局实例
 agent: Optional[DogBuddyAgent] = None
@@ -57,6 +58,8 @@ async def lifespan(app: FastAPI):
     global agent, memory, tts_router, embedded_engine, stt_engine, voice_manager, attr_manager, dream_engine, emotion_detector, dream_image_gen
 
     print("🐕 DogBuddy 服务启动中...")
+    cfg = load_config()
+    print(f"📋 配置加载完成: server={cfg['server']['host']}:{cfg['server']['port']}")
 
     # 记忆系统
     memory = MemorySystem()
@@ -117,8 +120,9 @@ async def lifespan(app: FastAPI):
         print(f"🔊 TTS: Edge TTS ({vname})")
 
     # STT 引擎
-    local_model = os.path.expanduser(r"E:\LLM\backbone\Voice\faster-whisper-small")
-    if not os.path.exists(local_model):
+    local_model = cfg['paths'].get('whisper_model') or None
+    if local_model and not os.path.exists(local_model):
+        print(f"⚠️ Whisper 模型路径不存在: {local_model}，将自动下载")
         local_model = None
 
     stt_engine = WhisperEngine(model_size="small", local_model_path=local_model)
@@ -831,12 +835,14 @@ async def serve_dream_image(filename: str):
 
 if __name__ == "__main__":
     import uvicorn
-    
-    port = int(os.environ.get("PORT", 18765))
-    
+
+    cfg = get_config()
+    host = cfg['server']['host']
+    port = cfg['server']['port']
+
     uvicorn.run(
         "main:app",
-        host="127.0.0.1",
+        host=host,
         port=port,
         log_level="info"
     )
