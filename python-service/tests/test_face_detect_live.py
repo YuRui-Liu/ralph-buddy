@@ -192,7 +192,7 @@ if __name__ == "__main__":
         compare_backends(img_array)
     else:
         # 1. 直接调用 DeepFace（原始返回）
-        test_deepface_direct(img_array, backend="opencv")
+        test_deepface_direct(img_array, backend="ssd")
 
         # 2. 用项目 EmotionDetector 测试
         test_project_detector(jpeg_bytes)

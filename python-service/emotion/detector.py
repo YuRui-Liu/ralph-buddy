@@ -67,7 +67,7 @@ class EmotionDetector:
                 img_path=img_array,
                 actions=["emotion"],
                 enforce_detection=False,
-                detector_backend="opencv",
+                detector_backend="ssd",
                 silent=True,
             )
         except Exception as e:
