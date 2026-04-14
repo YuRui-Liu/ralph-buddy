@@ -48,7 +48,7 @@ def test_save_and_reload(tmp_path):
 
     m1 = PetAttributeManager(db_path=db)
     m1.load()
-    m1._attrs['mood'] = 55.0
+    m1.attrs['mood'] = 55.0
     m1.save()
 
     m2 = PetAttributeManager(db_path=db)
@@ -80,8 +80,8 @@ def test_tick_clamping(tmp_path):
     m.load()
 
     # Force attributes to boundaries
-    for k in m._attrs:
-        m._attrs[k] = 0.0
+    for k in m.attrs:
+        m.attrs[k] = 0.0
     m.tick()
     for k, v in m.get_all().items():
         assert v >= 0.0, f"{k} went below 0 after tick"
@@ -113,7 +113,7 @@ def test_apply_offline_clamping(tmp_path):
     m.load()
 
     # Drain energy to 0 so energy gain is capped at 100
-    m._attrs['energy'] = 0.0
+    m.attrs['energy'] = 0.0
     m.apply_offline(1000)
     for k, v in m.get_all().items():
         assert 0.0 <= v <= 100.0, f"{k}={v} out of [0,100] after offline"
@@ -138,9 +138,10 @@ def test_apply_interaction_chat(mgr):
 # ── Test 8: unknown interaction type ─────────────────────────────────────── #
 
 def test_apply_interaction_unknown(mgr):
-    """apply_interaction with an unknown type must raise ValueError."""
-    with pytest.raises(ValueError, match="未知互动类型"):
-        mgr.apply_interaction('unknown_action')
+    """apply_interaction with an unknown type should be a no-op."""
+    before = mgr.get_all()
+    mgr.apply_interaction('unknown_action')
+    assert mgr.get_all() == before
 
 
 # ── Test 9: apply_dream_delta ─────────────────────────────────────────────── #

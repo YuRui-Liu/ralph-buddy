@@ -71,7 +71,7 @@ class PetAttributeManager:
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or _DEFAULT_DB_PATH
-        self._attrs: dict[str, float] = {}
+        self.attrs: dict[str, float] = {}
         self._last_dream_time: Optional[datetime] = None
 
     # ── 初始化 / 持久化 ─────────────────────────────────────────────────── #
@@ -95,7 +95,7 @@ class PetAttributeManager:
             loaded = {k: v for k, v in rows}
 
         # 以 DEFAULTS 为基础，用已存储的值覆盖
-        self._attrs = {k: loaded.get(k, v) for k, v in DEFAULTS.items()}
+        self.attrs = {k: loaded.get(k, v) for k, v in DEFAULTS.items()}
 
         # 处理 last_dream_time（作为特殊 key 存储）
         if '_last_dream_time' in loaded:
@@ -114,7 +114,7 @@ class PetAttributeManager:
 
     def save(self) -> None:
         """将当前属性写入 SQLite。"""
-        all_keys = list(self._attrs.keys())
+        all_keys = list(self.attrs.keys())
         self._persist_keys(all_keys, include_dream_time=True)
 
     def _persist_keys(
@@ -123,7 +123,7 @@ class PetAttributeManager:
         include_dream_time: bool = False,
     ) -> None:
         now = datetime.now().isoformat()
-        rows = [(k, self._attrs[k], now) for k in keys if k in self._attrs]
+        rows = [(k, self.attrs[k], now) for k in keys if k in self.attrs]
 
         if include_dream_time:
             dt_val = (
@@ -147,12 +147,12 @@ class PetAttributeManager:
     def tick(self) -> None:
         """执行一次自然衰减 tick（约 1 分钟）。"""
         for k, delta in TICK_DELTAS.items():
-            self._attrs[k] = _clamp(self._attrs[k] + delta)
+            self.attrs[k] = _clamp(self.attrs[k] + delta)
 
     def apply_offline(self, hours: float) -> None:
         """根据离线小时数补偿属性变化。"""
         for k, delta_per_hour in OFFLINE_DELTAS.items():
-            self._attrs[k] = _clamp(self._attrs[k] + delta_per_hour * hours)
+            self.attrs[k] = _clamp(self.attrs[k] + delta_per_hour * hours)
 
     # ── 互动 ────────────────────────────────────────────────────────────── #
 
@@ -161,15 +161,12 @@ class PetAttributeManager:
         应用互动对属性的影响。
 
         :param interaction_type: 'chat' | 'play' | 'responded' | 'ignored'
-        :raises ValueError: 若 interaction_type 未知。
         """
-        if interaction_type not in INTERACTION_DELTAS:
-            raise ValueError(
-                f"未知互动类型: {interaction_type!r}，"
-                f"支持的类型: {list(INTERACTION_DELTAS.keys())}"
-            )
-        for k, delta in INTERACTION_DELTAS[interaction_type].items():
-            self._attrs[k] = _clamp(self._attrs[k] + delta)
+        deltas = INTERACTION_DELTAS.get(interaction_type)
+        if deltas is None:
+            return
+        for k, delta in deltas.items():
+            self.attrs[k] = _clamp(self.attrs[k] + delta)
 
     # ── 梦境 ────────────────────────────────────────────────────────────── #
 
@@ -180,24 +177,18 @@ class PetAttributeManager:
         每个 delta 值会被限制在 [-10, +10] 之内，属性最终值限制在 [0, 100]。
         """
         for k, delta in deltas.items():
-            if k in self._attrs:
+            if k in self.attrs:
                 clamped_delta = _clamp(delta, -10.0, +10.0)
-                self._attrs[k] = _clamp(self._attrs[k] + clamped_delta)
+                self.attrs[k] = _clamp(self.attrs[k] + clamped_delta)
 
     # ── 查询 ────────────────────────────────────────────────────────────── #
 
     def get_all(self) -> dict[str, float]:
         """返回当前所有属性的副本。"""
-        return dict(self._attrs)
+        return dict(self.attrs)
 
     def get_prompt_hints(self) -> str:
-        """
-        返回用于注入系统提示词的中文状态描述。
-
-        示例：
-            健康值 80/100 | 心情 70/100 | 精力 80/100 |
-            亲密度 50/100 | 顺从度 60/100 | 毒舌值 30/100
-        """
+        """返回用于注入系统提示词的中文状态描述（多行格式）。"""
         labels = {
             'health':    '健康值',
             'mood':      '心情',
@@ -206,11 +197,14 @@ class PetAttributeManager:
             'obedience': '顺从度',
             'snark':     '毒舌值',
         }
-        parts = [
-            f"{labels[k]} {int(round(self._attrs[k]))}/100"
-            for k in labels
-        ]
-        return ' | '.join(parts)
+        lines = ['【来福当前状态】']
+        for k, label in labels.items():
+            val = self.attrs[k]
+            desc = _describe(k, val)
+            lines.append(f'{label}: {int(val)}/100 — {desc}')
+        lines.append('')
+        lines.append('请根据以上状态调整你的回应风格和行为。')
+        return '\n'.join(lines)
 
     # ── 梦境时间 ────────────────────────────────────────────────────────── #
 
@@ -221,3 +215,20 @@ class PetAttributeManager:
     def set_last_dream_time(self, dt: datetime) -> None:
         """设置上一次梦境触发时间。"""
         self._last_dream_time = dt
+
+
+def _describe(key: str, val: float) -> str:
+    """根据属性值生成简短描述"""
+    v = int(val)
+    descs = {
+        'health':    ('状态不错', '有点虚弱', '很不舒服'),
+        'mood':      ('心情很好', '有点低落', '情绪低迷'),
+        'energy':    ('精力充沛', '有点累了', '筋疲力尽'),
+        'affection': ('和主人很亲近', '和主人关系一般', '和主人还不太熟'),
+        'obedience': ('很听话', '有时候会任性', '非常任性'),
+        'snark':     ('嘴巴很毒', '偶尔调侃', '说话温柔'),
+    }
+    high, mid, low = descs.get(key, ('', '', ''))
+    if v >= 70: return high
+    if v >= 40: return mid
+    return low
