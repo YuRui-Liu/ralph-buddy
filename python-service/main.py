@@ -8,6 +8,7 @@ DogBuddy Python 服务 - FastAPI 后端
 import os
 import sys
 import io
+import re
 import json
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -22,32 +23,30 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from agent.dog_agent import DogBuddyAgent
-from memory.memory_system import MemorySystem
+from agent.pet_attributes import PetAttributeManager
+from agent.dream_engine import DreamEngine
+from memory.memory_system import MemorySystem, DB_PATH
 from tts.edge_engine import EdgeTTSEngine
-from tts.gpt_sovits_engine import GptSoVITSEngine
+from tts.embedded_engine import EmbeddedTTSEngine
+from tts.router import TTSRouter
 from tts.voice_manager import VoiceManager, get_manager
 from stt.whisper_engine import WhisperEngine
 
 # 全局实例
 agent: Optional[DogBuddyAgent] = None
 memory: Optional[MemorySystem] = None
-tts_engine = None          # EdgeTTSEngine | GptSoVITSEngine
+tts_router: Optional[TTSRouter] = None
+embedded_engine: Optional[EmbeddedTTSEngine] = None
 stt_engine: Optional[WhisperEngine] = None
 voice_manager: Optional[VoiceManager] = None
-gsv_engine: Optional[GptSoVITSEngine] = None  # 来福克隆引擎单例
-
-def _laifu_clone_dir() -> Optional[str]:
-    """返回 laifu-clone 目录绝对路径（不存在则返回 None）"""
-    here = os.path.dirname(os.path.abspath(__file__))
-    d = os.path.join(here, "data", "voices", "laifu-clone")
-    cfg = os.path.join(d, "config.json")
-    return d if os.path.exists(cfg) else None
+attr_manager: Optional[PetAttributeManager] = None
+dream_engine: Optional[DreamEngine] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """生命周期管理"""
-    global agent, memory, tts_engine, stt_engine, voice_manager, gsv_engine
+    global agent, memory, tts_router, embedded_engine, stt_engine, voice_manager, attr_manager, dream_engine
 
     print("🐕 DogBuddy 服务启动中...")
 
@@ -55,32 +54,51 @@ async def lifespan(app: FastAPI):
     memory = MemorySystem()
     await memory.initialize()
 
+    # 属性系统
+    attr_manager = PetAttributeManager(DB_PATH)
+    attr_manager.load()
+    last_dream = attr_manager.get_last_dream_time()
+    if last_dream:
+        offline_hours = (datetime.now() - last_dream).total_seconds() / 3600
+        if offline_hours > 0.5:
+            attr_manager.apply_offline(offline_hours)
+            attr_manager.save()
+            print(f"📊 离线 {offline_hours:.1f}h，已计算属性变化")
+    else:
+        print("📊 属性系统首次初始化")
+
     # AI Agent
-    agent = DogBuddyAgent(memory)
+    agent = DogBuddyAgent(memory, attr_manager)
     await agent.initialize()
+
+    # 做梦引擎
+    dream_engine = DreamEngine(memory, attr_manager, agent._call_single_llm)
 
     # 语音管理器
     voice_manager = get_manager()
 
-    # TTS 引擎：优先使用来福克隆，降级到 Edge TTS
-    clone_dir = _laifu_clone_dir()
-    if clone_dir:
-        try:
-            gsv_engine = GptSoVITSEngine(clone_dir)
-            await gsv_engine.start()
-            tts_engine = gsv_engine
-            print("🎙️  TTS: 来福克隆 (GPT-SoVITS)")
-        except Exception as e:
-            print(f"⚠️  来福克隆启动失败，降级到 Edge TTS: {e}")
-            gsv_engine = None
-            tts_engine = EdgeTTSEngine("xiaoxiao")
-            print(f"🔊 TTS: Edge TTS (xiaoxiao)")
+    # 若 laifu-clone 目录存在则注册为 gpt-sovits 包并激活
+    here = os.path.dirname(os.path.abspath(__file__))
+    clone_dir = os.path.join(here, "data", "voices", "laifu-clone")
+    if os.path.exists(os.path.join(clone_dir, "config.json")):
+        clone_pkg = voice_manager.register_voice_dir(
+            clone_dir, "laifu-clone", "来福克隆 (GPT-SoVITS)"
+        )
+        voice_manager.set_active_voice(clone_pkg.id)
+
+    # 组装 TTSRouter
+    cache_dir = os.path.join(here, "data", "tts_cache")
+    tts_router, embedded_engine = voice_manager.build_router(cache_dir=cache_dir)
+
+    # 后台预热内嵌推理引擎（warmup 内部已做异常处理，失败时自动降级）
+    if embedded_engine:
+        import asyncio as _asyncio
+        _asyncio.create_task(embedded_engine.warmup())
+        print("🎙️  TTS: GPT-SoVITS 预热中（后台），期间使用 Edge TTS 兜底...")
     else:
-        active_voice = voice_manager.get_active_package()
-        voice_name = (active_voice.voice_name if active_voice and active_voice.type == "edge-tts"
-                      else "xiaoxiao")
-        tts_engine = EdgeTTSEngine(voice_name)
-        print(f"🔊 TTS: Edge TTS ({voice_name})")
+        active = voice_manager.get_active_package()
+        vname = active.voice_name if active else "xiaoxiao"
+        print(f"🔊 TTS: Edge TTS ({vname})")
 
     # STT 引擎
     local_model = os.path.expanduser(r"E:\LLM\backbone\Voice\faster-whisper-small")
@@ -98,8 +116,6 @@ async def lifespan(app: FastAPI):
     print("🛑 DogBuddy 服务关闭中...")
     if memory:
         await memory.close()
-    if gsv_engine:
-        gsv_engine.close()
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -170,7 +186,7 @@ async def get_status():
         status="running",
         version="0.1.0",
         llm_ready=agent is not None and agent.llm_ready,
-        tts_ready=tts_engine is not None,
+        tts_ready=tts_router is not None,
         stt_ready=stt_engine is not None
     )
 
@@ -241,56 +257,59 @@ async def speech_to_text(
 @app.post("/api/tts")
 async def text_to_speech(
     text: str = Form(...),
-    voice_id: Optional[str] = Form(None)
+    voice_id: Optional[str] = Form(None),
+    hint: Optional[str] = Form(None),
 ):
     """
-    文字转语音 (Form Data 格式，兼容 Windows curl)
-    
+    文字转语音 (Form Data 格式)
+
     Args:
-        text: 要合成的文字
-        voice_id: 可选，语音包 ID
-    
+        text:     要合成的文字
+        voice_id: 可选，强制指定 edge-tts 语音包 ID（忽略路由器）
+        hint:     可选，路由提示，如 "barks.short"，默认 "llm"
+
     Returns:
-        音频流 (MP3)
+        音频流 (WAV 或 MP3)
     """
-    global tts_engine
-    
-    if not tts_engine:
+    if not tts_router:
         raise HTTPException(status_code=503, detail="TTS 引擎未初始化")
-    
+
+    if not text and hint == "llm":
+        raise HTTPException(status_code=400, detail="text 字段不能为空")
+
     try:
-        print(f"🎤 TTS 请求: text='{text[:30]}...', voice_id={voice_id}")
+        print(f"🎤 TTS 请求: text='{text[:30]}...', voice_id={voice_id}, hint={hint}")
 
+        # 过滤括号中的表情/动作描述，如（歪着头）、(摇尾巴)
+        text = re.sub(r'[（(][^）)]*[）)]', '', text).strip()
         if not text:
-            raise HTTPException(status_code=400, detail="text 字段不能为空")
+            raise HTTPException(status_code=400, detail="过滤表情/动作后文本为空")
 
-        # 确定本次使用的引擎
-        engine = tts_engine
-
+        # voice_id 指定时绕过路由器，直接用 EdgeTTS
         if voice_id:
-            if voice_id == "laifu-clone" and gsv_engine:
-                engine = gsv_engine
-            else:
-                pkg = voice_manager.get_package(voice_id)
-                if pkg and pkg.type == "edge-tts":
-                    engine = EdgeTTSEngine(pkg.voice_name)
-                    print(f"🎵 切换到语音包: {pkg.name}")
-                else:
-                    raise HTTPException(status_code=404, detail=f"语音包不存在: {voice_id}")
+            pkg = voice_manager.get_package(voice_id) if voice_manager else None
+            if pkg and pkg.type == "edge-tts":
+                audio_bytes = await EdgeTTSEngine(pkg.voice_name).synthesize(text)
+                return StreamingResponse(
+                    io.BytesIO(audio_bytes),
+                    media_type="audio/mpeg",
+                    headers={"Content-Disposition": "attachment; filename=speech.mp3"},
+                )
+            raise HTTPException(status_code=404, detail=f"语音包不存在: {voice_id}")
 
-        # 合成语音
-        audio_bytes = await engine.synthesize(text)
+        audio_bytes = await tts_router.synthesize(text, hint=hint or "llm")
         print(f"✅ TTS 合成完成: {len(audio_bytes)} bytes")
 
-        # 根据引擎类型返回对应格式
-        is_gsv = isinstance(engine, GptSoVITSEngine)
-        media_type = "audio/wav" if is_gsv else "audio/mpeg"
-        filename = "speech.wav" if is_gsv else "speech.mp3"
+        # 自动检测格式
+        if audio_bytes[:4] == b"RIFF":
+            media_type, filename = "audio/wav", "speech.wav"
+        else:
+            media_type, filename = "audio/mpeg", "speech.mp3"
 
         return StreamingResponse(
             io.BytesIO(audio_bytes),
             media_type=media_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     except HTTPException:
@@ -317,22 +336,22 @@ async def list_voices():
 
 @app.post("/api/tts/voices/{voice_id}/activate")
 async def activate_voice(voice_id: str):
-    """激活指定语音包"""
+    """激活指定语音包并重建 TTS 路由器"""
     if not voice_manager:
         raise HTTPException(status_code=503, detail="语音管理器未初始化")
-    
+
     success = voice_manager.set_active_voice(voice_id)
     if not success:
         raise HTTPException(status_code=404, detail="语音包不存在")
-    
-    # 更新 TTS 引擎
-    global tts_engine
-    if voice_id == "laifu-clone" and gsv_engine:
-        tts_engine = gsv_engine
-    else:
-        pkg = voice_manager.get_active_package()
-        if pkg and pkg.type == "edge-tts":
-            tts_engine = EdgeTTSEngine(pkg.voice_name)
+
+    global tts_router, embedded_engine
+    here = os.path.dirname(os.path.abspath(__file__))
+    cache_dir = os.path.join(here, "data", "tts_cache")
+    tts_router, new_embedded = voice_manager.build_router(voice_id, cache_dir=cache_dir)
+    if new_embedded and new_embedded is not embedded_engine:
+        import asyncio as _asyncio
+        _asyncio.create_task(new_embedded.warmup())
+    embedded_engine = new_embedded
 
     return {"status": "success", "active_voice_id": voice_id}
 
@@ -454,6 +473,45 @@ async def search_memory(query: str, top_k: int = 5):
     
     results = await memory.search(query, top_k)
     return {"results": results}
+
+# ============ 宠物属性 API ============
+
+@app.get("/api/pet/attributes")
+async def get_pet_attributes():
+    """获取当前宠物属性"""
+    if not attr_manager:
+        raise HTTPException(status_code=503, detail="属性系统未初始化")
+    return attr_manager.get_all()
+
+
+@app.post("/api/pet/attributes/tick")
+async def tick_attributes():
+    """运行时 tick（前端每 10 分钟调用一次）"""
+    if not attr_manager:
+        raise HTTPException(status_code=503, detail="属性系统未初始化")
+    attr_manager.tick()
+    attr_manager.save()
+    return attr_manager.get_all()
+
+
+@app.post("/api/pet/dream")
+async def trigger_dream():
+    """触发做梦（来福进入 sleep 状态时前端调用）"""
+    if not dream_engine:
+        raise HTTPException(status_code=503, detail="做梦引擎未初始化")
+    if not dream_engine.can_dream():
+        return {"status": "cooldown", "message": "做梦冷却中"}
+
+    result = await dream_engine.dream()
+    if result is None:
+        raise HTTPException(status_code=500, detail="做梦失败")
+
+    return {
+        "status": "success",
+        "dream_text": result["dream_text"],
+        "attribute_deltas": result["attribute_deltas"],
+        "attributes": attr_manager.get_all(),
+    }
 
 # ============ 主入口 ============
 
