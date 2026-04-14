@@ -27,6 +27,19 @@ LOCAL_EMBED_MODEL = r'E:\LLM\backbone\embeddings\all-MiniLM-L6-v2'
 COMPRESS_BATCH = 12   # 一次压缩的对话条数（6 轮），agent 在 short_term >= MAX_SHORT_TERM 时触发
 
 
+def build_compress_prompt(conv_text: str) -> str:
+    """构建记忆压缩 prompt，包含来福视角摘要字段。"""
+    return (
+        "请对以下对话做三件事，返回纯 JSON（不要包含 markdown 代码块）：\n"
+        "1. summary: 用2-3句话概括对话内容\n"
+        "2. facts: 提取用户关键信息（姓名、爱好、情绪、重要事件等，key用中文）\n"
+        "3. laifu_note: 用来福（狗）的第一人称视角，写一句话总结这段对话中来福最在意的事。"
+        "例如：\"主人今天好像很累，我想让他早点休息\"\n\n"
+        f"对话内容：\n{conv_text}\n\n"
+        '返回格式：{"summary": "...", "facts": [{"key": "...", "value": "..."}], "laifu_note": "..."}'
+    )
+
+
 class MemorySystem:
     """
     记忆系统主类
@@ -219,13 +232,7 @@ class MemorySystem:
             for m in to_compress
         )
 
-        prompt = (
-            "请对以下对话做两件事，返回纯 JSON（不要包含 markdown 代码块）：\n"
-            "1. summary: 用2-3句话概括对话内容\n"
-            "2. facts: 提取用户关键信息（姓名、爱好、情绪、重要事件等，key用中文）\n\n"
-            f"对话内容：\n{conv_text}\n\n"
-            '返回格式：{"summary": "...", "facts": [{"key": "...", "value": "..."}]}'
-        )
+        prompt = build_compress_prompt(conv_text)
 
         try:
             raw  = await llm_caller(prompt)
@@ -234,12 +241,18 @@ class MemorySystem:
 
             summary = data.get("summary", "")
             facts   = data.get("facts", [])
+            laifu_note = data.get("laifu_note", "")
 
             c = self.conn.cursor()
             c.execute(
                 "INSERT INTO conversations (role, content, is_summary) VALUES (?, ?, 1)",
                 ("summary", summary),
             )
+            if laifu_note:
+                c.execute(
+                    "INSERT INTO conversations (role, content, is_summary) VALUES (?, ?, 1)",
+                    ("laifu_memory", laifu_note),
+                )
             for fact in facts:
                 if fact.get("key") and fact.get("value"):
                     c.execute(
@@ -252,8 +265,12 @@ class MemorySystem:
                     )
             self.conn.commit()
 
-            if self.collection and summary:
-                asyncio.create_task(self._embed_summary(summary))
+            if self.collection:
+                combined = summary
+                if laifu_note:
+                    combined += f"\n来福记忆：{laifu_note}"
+                if combined:
+                    asyncio.create_task(self._embed_summary(combined))
 
             print(f"✅ 记忆压缩完成，提取 {len(facts)} 条画像")
             self._compressing = False
