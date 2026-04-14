@@ -16,7 +16,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from dream.image_generator import DreamImageGenerator
 from pydantic import BaseModel
 
 # 确保能正确导入本地模块
@@ -44,13 +45,14 @@ voice_manager: Optional[VoiceManager] = None
 attr_manager: Optional[PetAttributeManager] = None
 dream_engine: Optional[DreamEngine] = None
 emotion_detector: Optional[EmotionDetector] = None
+dream_image_gen: Optional[DreamImageGenerator] = None
 mic_recorder: Optional[MicRecorder] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """生命周期管理"""
-    global agent, memory, tts_router, embedded_engine, stt_engine, voice_manager, attr_manager, dream_engine, emotion_detector
+    global agent, memory, tts_router, embedded_engine, stt_engine, voice_manager, attr_manager, dream_engine, emotion_detector, dream_image_gen
 
     print("🐕 DogBuddy 服务启动中...")
 
@@ -77,6 +79,14 @@ async def lifespan(app: FastAPI):
 
     # 做梦引擎
     dream_engine = DreamEngine(memory, attr_manager, agent._call_single_llm)
+
+    # 梦境图片生成器
+    img_cfg = agent.config.get("image", {})
+    if img_cfg.get("api_key") and img_cfg.get("api_key") != "sk-xxx":
+        dream_image_gen = DreamImageGenerator(img_cfg)
+        print(f"🎨 梦境绘图: {img_cfg.get('provider', 'siliconflow')} / {img_cfg.get('model', 'FLUX')}")
+    else:
+        print("🎨 梦境绘图: 未配置 (跳过图片生成)")
 
     # 语音管理器
     voice_manager = get_manager()
@@ -700,9 +710,85 @@ async def trigger_dream():
     return {
         "status": "success",
         "dream_text": result["dream_text"],
+        "image_prompt": result.get("image_prompt", ""),
         "attribute_deltas": result["attribute_deltas"],
         "attributes": attr_manager.get_all(),
+        "event_id": result.get("event_id"),
     }
+
+@app.post("/api/dream/image")
+async def generate_dream_image(request: Request):
+    """生成梦境图片"""
+    if not dream_image_gen:
+        raise HTTPException(status_code=503, detail="梦境绘图未配置")
+
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    event_id = body.get("event_id")
+
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt 不能为空")
+
+    result = await dream_image_gen.generate(prompt)
+    if result is None:
+        return {"status": "failed", "image_path": None}
+
+    if event_id and dream_engine:
+        dream_engine.update_dream_image(event_id, result["image_path"])
+
+    return {
+        "status": "success",
+        "image_path": result["image_path"],
+        "image_base64": result["image_base64"],
+    }
+
+
+@app.get("/api/dream/history")
+async def get_dream_history():
+    """获取梦境日记列表"""
+    if not memory:
+        raise HTTPException(status_code=503, detail="记忆系统未初始化")
+
+    conn = memory.conn
+    rows = conn.execute(
+        "SELECT id, content, importance, created_at FROM events ORDER BY created_at DESC"
+    ).fetchall()
+
+    dreams = []
+    for row in rows:
+        eid, content, importance, created_at = row
+        try:
+            data = json.loads(content)
+            if data.get("type") != "dream":
+                continue
+            dreams.append({
+                "id": eid,
+                "text": data.get("text", ""),
+                "image_path": data.get("image_path"),
+                "attribute_deltas": data.get("attribute_deltas", {}),
+                "created_at": created_at,
+            })
+        except (json.JSONDecodeError, TypeError):
+            if content.startswith("【做梦】"):
+                dreams.append({
+                    "id": eid,
+                    "text": content.replace("【做梦】", "", 1),
+                    "image_path": None,
+                    "attribute_deltas": {},
+                    "created_at": created_at,
+                })
+
+    return {"dreams": dreams}
+
+
+@app.get("/api/dream/image/{filename}")
+async def serve_dream_image(filename: str):
+    """提供梦境图片文件访问"""
+    filepath = os.path.join(os.path.dirname(__file__), "data", "dreams", filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return FileResponse(filepath, media_type="image/png")
+
 
 # ============ 主入口 ============
 
