@@ -30,6 +30,7 @@ class DreamEngine:
         self.memory = memory_system
         self.attr_manager = attr_manager
         self.llm_caller = llm_caller
+        self._last_event_id: Optional[int] = None
 
     # ------------------------------------------------------------------ #
     #  公开接口                                                             #
@@ -77,6 +78,7 @@ class DreamEngine:
         profile_updates  = data.get("profile_updates", [])
         attribute_deltas = data.get("attribute_deltas", {})
         reasoning        = data.get("reasoning", "")
+        image_prompt    = data.get("image_prompt", "")
 
         # 4. 应用属性 deltas
         if attribute_deltas:
@@ -104,22 +106,52 @@ class DreamEngine:
                     )
             conn.commit()
 
-        # 7. 将梦境写入 events 表
+        # 7. 将梦境写入 events 表（JSON 格式，兼容日记查询）
+        self._last_event_id = None
         if conn and dream_text:
+            dream_record = json.dumps({
+                "type": "dream",
+                "text": dream_text,
+                "image_prompt": image_prompt,
+                "image_path": None,
+                "attribute_deltas": attribute_deltas,
+            }, ensure_ascii=False)
             c = conn.cursor()
             c.execute(
                 "INSERT INTO events (content, importance, created_at) VALUES (?, ?, ?)",
-                (f"【做梦】{dream_text}", 3, now.isoformat()),
+                (dream_record, 3, now.isoformat()),
             )
             conn.commit()
+            self._last_event_id = c.lastrowid
 
         result = {
             "dream_text":       dream_text,
+            "image_prompt":     image_prompt,
             "profile_updates":  profile_updates,
             "attribute_deltas": attribute_deltas,
             "reasoning":        reasoning,
+            "event_id":         self._last_event_id,
         }
         return result
+
+    def update_dream_image(self, event_id: int, image_path: str) -> None:
+        """将生成的梦境图片路径回写到 events 表记录中。"""
+        conn = self.memory.conn
+        if not conn or not event_id:
+            return
+        try:
+            c = conn.cursor()
+            row = c.execute("SELECT content FROM events WHERE id=?", (event_id,)).fetchone()
+            if row:
+                data = json.loads(row[0])
+                data["image_path"] = image_path
+                c.execute(
+                    "UPDATE events SET content=? WHERE id=?",
+                    (json.dumps(data, ensure_ascii=False), event_id),
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[DreamEngine] 更新梦境图片路径失败: {e}")
 
     # ------------------------------------------------------------------ #
     #  内部方法                                                             #
@@ -153,7 +185,9 @@ class DreamEngine:
             f"{attr_lines}\n\n"
             "请返回纯 JSON（不要包含 markdown 代码块），格式如下：\n"
             '{\n'
-            '  "dream_text": "（简短描述来福梦到了什么，用第三人称）",\n'
+            '  "dream_text": "（简短描述来福梦到了什么，用第三人称，2-3句话）",\n'
+            '  "image_prompt": "（英文，用于AI绘图的提示词，描述梦境画面，'
+            '加上 dreamy watercolor style, soft lighting, cute corgi）",\n'
             '  "profile_updates": [{"key": "...", "value": "..."}],\n'
             '  "attribute_deltas": {"mood": 0, "affection": 0, "energy": 0, '
             '"health": 0, "obedience": 0, "snark": 0},\n'
