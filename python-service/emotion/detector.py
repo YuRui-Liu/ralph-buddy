@@ -21,6 +21,17 @@ DEEP_COOLDOWN_SEC = 180  # 深度分析冷却：3 分钟
 def _ensure_deepface():
     global DeepFace
     if DeepFace is None:
+        # Windows GBK 控制台无法输出 DeepFace 日志中的 emoji，
+        # 设置 stdout/stderr 为 utf-8 防止 UnicodeEncodeError 导致模型下载失败
+        import sys
+        if sys.platform == "win32":
+            for stream_name in ("stdout", "stderr"):
+                stream = getattr(sys, stream_name)
+                if hasattr(stream, "reconfigure"):
+                    try:
+                        stream.reconfigure(encoding="utf-8", errors="replace")
+                    except Exception:
+                        pass
         from deepface import DeepFace as _DF
         DeepFace = _DF
 
