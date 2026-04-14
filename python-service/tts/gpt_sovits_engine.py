@@ -19,8 +19,6 @@ import httpx
 class GptSoVITSEngine:
     """GPT-SoVITS 语音合成引擎（通过 HTTP 调用本地 api_v2 子进程）"""
 
-    API_PORT = 9880
-    API_BASE = f"http://127.0.0.1:{API_PORT}"
     STARTUP_TIMEOUT = 60  # 等待子进程就绪的最长秒数
 
     def __init__(self, voice_dir: str):
@@ -30,6 +28,13 @@ class GptSoVITSEngine:
         Args:
             voice_dir: 语音包目录，包含 config.json、models/、reference/
         """
+        try:
+            from core.config import get_config
+            self.API_PORT = get_config()['paths'].get('gpt_sovits_port', 9880)
+        except Exception:
+            self.API_PORT = 9880
+        self.API_BASE = f"http://127.0.0.1:{self.API_PORT}"
+
         self.voice_dir = os.path.abspath(voice_dir)
         self._process: Optional[subprocess.Popen] = None
 

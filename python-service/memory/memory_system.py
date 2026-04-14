@@ -21,8 +21,13 @@ BASE_DIR = os.path.normpath(
 DB_PATH     = os.path.join(BASE_DIR, 'memory.db')
 CHROMA_PATH = os.path.join(BASE_DIR, 'chromadb')
 
-# 本地 embedding 模型路径（找不到则用 Chroma 内置默认）
-LOCAL_EMBED_MODEL = r'E:\LLM\backbone\embeddings\all-MiniLM-L6-v2'
+def _get_embed_model_path() -> str:
+    """从统一配置获取 embedding 模型路径。"""
+    try:
+        from core.config import get_config
+        return get_config()['paths'].get('embedding_model', '')
+    except Exception:
+        return os.getenv('EMBEDDING_MODEL_PATH', '')
 
 COMPRESS_BATCH = 12   # 一次压缩的对话条数（6 轮），agent 在 short_term >= MAX_SHORT_TERM 时触发
 
@@ -107,8 +112,9 @@ class MemorySystem:
                         self._model = SentenceTransformer(self._path)
                     return self._model.encode(input).tolist()
 
-            if os.path.exists(LOCAL_EMBED_MODEL):
-                return _LocalEF(LOCAL_EMBED_MODEL)
+            embed_path = _get_embed_model_path()
+            if embed_path and os.path.exists(embed_path):
+                return _LocalEF(embed_path)
         except ImportError:
             pass
         return None
