@@ -113,6 +113,11 @@ class MemorySystem:
                 importance INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS pet_attributes (
+                key        TEXT PRIMARY KEY,
+                value      REAL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         self.conn.commit()
 

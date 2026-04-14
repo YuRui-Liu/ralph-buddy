@@ -79,6 +79,13 @@ def test_get_user_profile_empty(tmp_memory):
     assert profile["total_conversations"] == 0
 
 
+def test_pet_attributes_table_exists(tmp_memory):
+    """pet_attributes table should be created during initialization."""
+    c = tmp_memory.conn.cursor()
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pet_attributes'")
+    assert c.fetchone() is not None
+
+
 def test_clear_all(tmp_memory):
     asyncio.get_event_loop().run_until_complete(tmp_memory.store("hi", "汪"))
     asyncio.get_event_loop().run_until_complete(tmp_memory.add_manual_memory("记住这个"))
