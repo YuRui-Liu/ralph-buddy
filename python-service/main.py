@@ -31,6 +31,7 @@ from tts.embedded_engine import EmbeddedTTSEngine
 from tts.router import TTSRouter
 from tts.voice_manager import VoiceManager, get_manager
 from stt.whisper_engine import WhisperEngine
+from emotion.detector import EmotionDetector
 
 # 全局实例
 agent: Optional[DogBuddyAgent] = None
@@ -41,12 +42,13 @@ stt_engine: Optional[WhisperEngine] = None
 voice_manager: Optional[VoiceManager] = None
 attr_manager: Optional[PetAttributeManager] = None
 dream_engine: Optional[DreamEngine] = None
+emotion_detector: Optional[EmotionDetector] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """生命周期管理"""
-    global agent, memory, tts_router, embedded_engine, stt_engine, voice_manager, attr_manager, dream_engine
+    global agent, memory, tts_router, embedded_engine, stt_engine, voice_manager, attr_manager, dream_engine, emotion_detector
 
     print("🐕 DogBuddy 服务启动中...")
 
@@ -107,6 +109,46 @@ async def lifespan(app: FastAPI):
 
     stt_engine = WhisperEngine(model_size="small", local_model_path=local_model)
 
+    # 情绪检测器
+    async def _deep_llm_call(image_bytes: bytes, local_emotion: str) -> dict:
+        """调用视觉 LLM 进行深度情绪分析"""
+        import base64
+        b64 = base64.b64encode(image_bytes).decode()
+        prompt = (
+            f"这是一张用户的摄像头截图。本地模型检测到用户表情为 {local_emotion}。\n"
+            "请用中文简短描述：\n"
+            "1. 用户当前的情绪状态和可能的原因\n"
+            "2. 场景描述（姿态、环境等）\n"
+            "3. 作为一只关心主人的狗狗，应该做什么反应（一个词：comfort/play/guard/calm/celebrate）\n"
+            "4. 用狗狗的口吻说一句关心的话\n\n"
+            "请严格按 JSON 格式返回：\n"
+            '{"description": "...", "suggested_action": "...", "suggested_speech": "..."}'
+        )
+        if agent and agent.llm_client and agent.llm_ready:
+            cfg = agent.config.get("llm", {})
+            model = cfg.get("vision_model", cfg.get("model", "deepseek-chat"))
+            resp = await agent.llm_client.chat.completions.create(
+                model=model,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    ],
+                }],
+                temperature=0.7,
+                max_tokens=200,
+            )
+            import json as _json
+            raw = resp.choices[0].message.content
+            try:
+                return _json.loads(raw)
+            except _json.JSONDecodeError:
+                return {"description": raw, "suggested_action": "comfort", "suggested_speech": ""}
+        return None
+
+    emotion_detector = EmotionDetector(deep_llm_call=_deep_llm_call)
+
     print("✅ DogBuddy 服务已就绪！")
     print(f"   🎤 STT: Whisper (small), 路径：{local_model}")
 
@@ -157,6 +199,22 @@ class STTResponse(BaseModel):
     text: str
     confidence: float
 
+class EmotionLocalResult(BaseModel):
+    emotion: str
+    confidence: float
+    all_scores: Dict[str, float]
+
+class EmotionDeepResult(BaseModel):
+    description: str
+    suggested_action: str
+    suggested_speech: str
+
+class EmotionResponse(BaseModel):
+    has_face: bool
+    local: Optional[EmotionLocalResult] = None
+    deep: Optional[EmotionDeepResult] = None
+    changed: bool = False
+
 class StatusResponse(BaseModel):
     status: str
     version: str
@@ -205,6 +263,35 @@ async def chat(request: ChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"对话失败: {str(e)}")
+
+@app.post("/api/emotion", response_model=EmotionResponse)
+async def detect_emotion(
+    image: UploadFile = File(...),
+    deep: bool = Form(False),
+):
+    """情绪检测 — 摄像头截帧 → 本地快速识别 + 可选深度分析"""
+    if not emotion_detector:
+        raise HTTPException(status_code=503, detail="情绪检测器未初始化")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="图像为空")
+
+    result = await emotion_detector.detect(image_bytes)
+    print(f"👁️ 情绪检测: has_face={result['has_face']}, "
+          f"emotion={result['local']['emotion'] if result['local'] else 'N/A'}, "
+          f"changed={result['changed']}")
+
+    if deep or (result["has_face"] and emotion_detector.should_trigger_deep(result)):
+        deep_result = await emotion_detector.analyze_deep(image_bytes, result)
+        result["deep"] = deep_result
+        if deep_result:
+            print(f"🧠 深度分析: {deep_result.get('description', '')[:50]}")
+            if agent:
+                agent.owner_emotion_context = deep_result.get("description", "")
+
+    return result
+
 
 @app.post("/api/stt")
 async def speech_to_text(
