@@ -1,84 +1,81 @@
 <template>
   <div class="voice-recorder">
-    <!-- 录音按钮 -->
     <button
       class="record-btn"
-      :class="{ 
-        'recording': isRecording, 
+      :class="{
+        'recording': isRecording,
         'processing': isProcessing,
-        'speaking': isSpeaking 
+        'speaking': isSpeaking,
+        'vad-active': vadListening
       }"
-      @mousedown="startRecording"
-      @mouseup="stopRecording"
-      @mouseleave="stopRecording"
-      @touchstart.prevent="startRecording"
-      @touchend.prevent="stopRecording"
+      @click="onMicClick"
       :disabled="isProcessing"
     >
-      <div class="btn-content">
-        <span class="icon">{{ buttonIcon }}</span>
-        <span class="text">{{ buttonText }}</span>
-      </div>
-      
-      <!-- 录音波形动画 -->
-      <div v-if="isRecording" class="wave-animation">
-        <span v-for="i in 5" :key="i" :style="{ animationDelay: `${i * 0.1}s` }"></span>
-      </div>
-      
-      <!-- 处理中旋转 -->
-      <div v-if="isProcessing" class="spinner"></div>
+      <span class="icon">{{ buttonIcon }}</span>
+      <span v-if="isRecording" class="pulse-ring"></span>
     </button>
-    
-    <!-- 状态提示 -->
-    <div class="status-hint" :class="statusClass">
-      {{ statusHint }}
-    </div>
-    
-    <!-- 音量指示器 -->
-    <div v-if="isRecording" class="volume-indicator">
-      <div class="volume-bar" :style="{ width: `${volume * 100}%` }"></div>
-    </div>
+    <span class="status-label" :class="statusClass">{{ statusLabel }}</span>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
-import { usePetStore } from '../stores/pet'
-import { useUiStore } from '../stores/ui'
+import { useSettingsStore } from '../stores/settings'
 import { useSimpleVAD } from '../composables/useSimpleVAD'
 
 const chatStore = useChatStore()
-const petStore = usePetStore()
-const uiStore = useUiStore()
+const settings = useSettingsStore()
 
-// 状态
 const isRecording = ref(false)
 const isProcessing = ref(false)
 const isSpeaking = ref(false)
-const volume = ref(0)
 const statusText = ref('')
+const vadListening = ref(false)
 
-// 手动录音相关（VAD 不可用时的 fallback）
-let manualRecording = false
+let pythonPort = 18765
 
-// 计算属性
+// ── VAD 实例（浏览器端语音检测）──
+
+const vad = useSimpleVAD({
+  onSpeechStart: () => {
+    console.log('[VAD] 检测到语音开始')
+    isRecording.value = true
+    statusText.value = '正在听...'
+  },
+  onSpeechEnd: async (blob) => {
+    console.log('[VAD] 检测到语音结束, blob size:', blob?.size)
+    isRecording.value = false
+    statusText.value = ''
+    if (blob && blob.size > 0) {
+      await processVADAudio(blob)
+    }
+  },
+  onVADMisfire: () => {
+    console.log('[VAD] 误触发（太短）')
+    isRecording.value = false
+    statusText.value = '没听清，请重试'
+    setTimeout(() => { statusText.value = '' }, 1500)
+  }
+})
+
+// ── 计算属性 ──
+
 const buttonIcon = computed(() => {
   if (isProcessing.value) return '⏳'
   if (isSpeaking.value) return '🔊'
-  if (isRecording.value) return '⏹️'
+  if (isRecording.value) return '🔴'
+  if (vadListening.value) return '🎤'
   return '🎤'
 })
 
-const buttonText = computed(() => {
-  if (isProcessing.value) return '思考中...'
-  if (isSpeaking.value) return '说话中...'
+const statusLabel = computed(() => {
+  if (statusText.value) return statusText.value
+  if (isProcessing.value) return '思考中'
+  if (isSpeaking.value) return '说话中'
   if (isRecording.value) return '聆听中...'
-  return '待命'
-})
-
-const statusHint = computed(() => {
-  return statusText.value || '对我说话即可，无需按键'
+  if (vadListening.value) return '说话即可'
+  return '点击说话'
 })
 
 const statusClass = computed(() => {
@@ -88,71 +85,57 @@ const statusClass = computed(() => {
   return ''
 })
 
-// 初始化 VAD - 基于 Web Audio 能量检测，无需 WASM/ORT
-const vad = useSimpleVAD({
-  onSpeechStart: () => {
-    console.log('🎤 检测到语音开始')
-    isRecording.value = true
-    statusText.value = '正在听...'
-  },
-  onSpeechEnd: async (blob) => {
-    console.log('🎤 检测到语音结束')
-    isRecording.value = false
-    statusText.value = ''
-    await processAudioBlob(blob)
-  },
-  onVADMisfire: () => {
-    console.log('🎤 VAD 误触发')
-    isRecording.value = false
-    statusText.value = '没听清，请重试'
-    setTimeout(() => { statusText.value = '' }, 1500)
-  }
-})
+// ── 按钮点击 ──
 
-async function initVAD() {
-  statusText.value = '初始化中...'
+async function onMicClick() {
+  if (isProcessing.value || isSpeaking.value) return
+
+  if (settings.autoVAD) {
+    // VAD 模式：点击切换监听开关
+    if (vadListening.value) {
+      await stopVAD()
+    } else {
+      await startVAD()
+    }
+  } else {
+    // 手动模式：点击开始/停止 Python 录音
+    if (isRecording.value) {
+      await stopAndTranscribe()
+    } else {
+      await startRecording()
+    }
+  }
+}
+
+// ── VAD 模式 ──
+
+async function startVAD() {
   try {
     await vad.start()
-    statusText.value = ''
-    console.log('✅ VAD 初始化完成，常驻监听中')
-  } catch (error) {
-    console.error('❌ VAD 初始化失败:', error)
-    statusText.value = '按住说话（VAD不可用）'
+    vadListening.value = true
+    console.log('[VAD] 自动监听已启动')
+  } catch (e) {
+    console.error('[VAD] 启动失败:', e)
+    statusText.value = 'VAD启动失败'
+    setTimeout(() => { statusText.value = '' }, 2000)
   }
 }
 
-// 手动录音：按下按钮时触发 VAD 的录音流程
-// VAD 的 ScriptProcessorNode 已经在持续捕获 PCM，这里只需模拟 speech start/end
-function startRecording() {
-  if (isProcessing.value || isRecording.value) return
-  // 不做额外操作——VAD 自动检测即可。
-  // 按钮仅作为视觉反馈，实际录音由 VAD 全权管理。
-  statusText.value = '请说话，VAD 会自动检测...'
+function stopVAD() {
+  vad.stop()
+  vadListening.value = false
+  isRecording.value = false
+  console.log('[VAD] 自动监听已停止')
 }
 
-function stopRecording() {
-  // VAD 模式下无需手动停止
-}
-
-// 统一处理音频 Blob（VAD 直接输出 WAV，无需额外转换）
-async function processAudioBlob(blob) {
-  if (!blob || blob.size === 0) {
-    statusText.value = '录音太短，请重试'
-    return
-  }
-
-  // 暂停 VAD：防止处理/TTS 播放期间扬声器声音抬高背景噪声阈值
+async function processVADAudio(blob) {
+  // 暂停 VAD 防止 TTS 播放时误触
   vad.pause()
-
   isProcessing.value = true
   statusText.value = '识别中...'
 
   try {
-    console.log(`🎤 发送音频: ${blob.size} bytes, type=${blob.type}`)
-
-    const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
-
-    // Step 1: STT — VAD 输出的已经是 WAV
+    // Step 1: STT
     const formData = new FormData()
     formData.append('audio', blob, 'recording.wav')
     formData.append('language', 'zh')
@@ -161,7 +144,7 @@ async function processAudioBlob(blob) {
       method: 'POST',
       body: formData
     })
-    if (!sttRes.ok) throw new Error(`STT 请求失败: ${sttRes.status}`)
+    if (!sttRes.ok) throw new Error(`STT 失败: ${sttRes.status}`)
 
     const sttResult = await sttRes.json()
     const userText = sttResult.text?.trim()
@@ -180,7 +163,7 @@ async function processAudioBlob(blob) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: userText })
     })
-    if (!chatRes.ok) throw new Error(`Chat 请求失败: ${chatRes.status}`)
+    if (!chatRes.ok) throw new Error(`Chat 失败: ${chatRes.status}`)
 
     const chatData = await chatRes.json()
     const replyText = chatData.reply
@@ -192,35 +175,98 @@ async function processAudioBlob(blob) {
     // Step 3: TTS
     await playResponse(replyText)
 
-  } catch (error) {
-    console.error('❌ 语音对话失败:', error)
+  } catch (e) {
+    console.error('[VAD] 语音对话失败:', e)
     statusText.value = '出错了，请重试'
   } finally {
     isProcessing.value = false
-    statusText.value = ''
-    // 恢复 VAD 监听，重新估算背景噪声基线
+    if (!statusText.value.startsWith('出错')) {
+      statusText.value = ''
+    }
+    // 恢复 VAD 监听
     await vad.resume()
   }
 }
 
-// 播放回复语音（使用来福专属声音）
+// ── 手动模式（Python 后端录音）──
+
+async function startRecording() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${pythonPort}/api/mic/start`, { method: 'POST' })
+    const data = await res.json()
+    if (data.status === 'recording' || data.status === 'already_recording') {
+      isRecording.value = true
+      statusText.value = ''
+    }
+  } catch (e) {
+    console.error('[Manual] 启动录音失败:', e)
+    statusText.value = '录音启动失败'
+    setTimeout(() => { statusText.value = '' }, 2000)
+  }
+}
+
+async function stopAndTranscribe() {
+  isRecording.value = false
+  isProcessing.value = true
+  statusText.value = '识别中...'
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${pythonPort}/api/mic/stop`, { method: 'POST' })
+    const data = await res.json()
+
+    if (!data.text || data.text.trim() === '') {
+      statusText.value = '没听清，请重试'
+      setTimeout(() => { statusText.value = '' }, 2000)
+      return
+    }
+
+    const userText = data.text.trim()
+    chatStore.addMessage('user', userText)
+    statusText.value = `你: "${userText}"`
+
+    statusText.value = '来福思考中...'
+    const chatRes = await fetch(`http://127.0.0.1:${pythonPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: userText })
+    })
+    if (!chatRes.ok) throw new Error(`Chat 失败: ${chatRes.status}`)
+
+    const chatData = await chatRes.json()
+    const replyText = chatData.reply
+    if (!replyText) throw new Error('没有收到回复')
+
+    chatStore.addMessage('assistant', replyText)
+    chatStore.showMessage(replyText, 6000)
+
+    await playResponse(replyText)
+
+  } catch (e) {
+    console.error('[Manual] 语音对话失败:', e)
+    statusText.value = '出错了，请重试'
+  } finally {
+    isProcessing.value = false
+    if (!statusText.value.startsWith('出错')) {
+      statusText.value = ''
+    }
+  }
+}
+
+// ── TTS 播放 ──
+
 async function playResponse(text) {
   try {
     isSpeaking.value = true
-    statusText.value = "来福说话中..."
-
-    const pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
+    statusText.value = '来福说话中...'
 
     const formData = new FormData()
     formData.append('text', text)
-    // voice_id 留空，后端默认用 laifu-clone（若已启动）
 
     const response = await fetch(`http://127.0.0.1:${pythonPort}/api/tts`, {
       method: 'POST',
       body: formData
     })
-
-    if (!response.ok) throw new Error(`TTS 请求失败: ${response.status}`)
+    if (!response.ok) throw new Error(`TTS 失败: ${response.status}`)
 
     const contentType = response.headers.get('content-type') || 'audio/mpeg'
     const audioBlob = new Blob([await response.arrayBuffer()], { type: contentType })
@@ -232,23 +278,47 @@ async function playResponse(text) {
       audio.onerror = () => { URL.revokeObjectURL(audioUrl); resolve() }
       audio.play().catch(resolve)
     })
-
-  } catch (error) {
-    console.error("❌ 语音播放失败:", error)
+  } catch (e) {
+    console.error('[TTS] 播放失败:', e)
   } finally {
     isSpeaking.value = false
-    statusText.value = ""
+    statusText.value = ''
   }
 }
 
-// 生命周期
-onMounted(() => {
-  initVAD()
+// ── autoVAD 设置变化 ──
+
+watch(() => settings.autoVAD, (enabled) => {
+  if (enabled) {
+    startVAD()
+  } else {
+    stopVAD()
+  }
+})
+
+// ── 生命周期 ──
+
+onMounted(async () => {
+  pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
+
+  // 如果 autoVAD 已启用，自动开始监听
+  if (settings.autoVAD) {
+    await startVAD()
+  }
+
+  // Ctrl+P 快捷键
+  if (window.electronAPI?.onToggleRecording) {
+    window.electronAPI.onToggleRecording(() => onMicClick())
+  }
 })
 
 onUnmounted(() => {
-  stopRecording()
-  vad.stop()
+  if (vadListening.value) {
+    vad.stop()
+  }
+  if (isRecording.value && !settings.autoVAD) {
+    fetch(`http://127.0.0.1:${pythonPort}/api/mic/cancel`, { method: 'POST' }).catch(() => {})
+  }
 })
 </script>
 
@@ -257,141 +327,89 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 3px;
 }
 
 .record-btn {
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: rgba(102, 126, 234, 0.55);
   color: white;
   cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-  overflow: hidden;
+  transition: all 0.25s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .record-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+  background: rgba(102, 126, 234, 0.8);
+  transform: scale(1.1);
 }
 
 .record-btn:disabled {
-  opacity: 0.7;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .record-btn.recording {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-  animation: pulse 1s infinite;
+  background: rgba(245, 87, 108, 0.7);
 }
 
 .record-btn.processing {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  background: rgba(79, 172, 254, 0.7);
 }
 
 .record-btn.speaking {
-  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  background: rgba(67, 233, 123, 0.7);
 }
 
-.btn-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+.record-btn.vad-active {
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.4);
 }
 
 .icon {
-  font-size: 24px;
+  font-size: 16px;
+  line-height: 1;
 }
 
-.text {
-  font-size: 11px;
-  font-weight: 500;
-}
-
-/* 波形动画 */
-.wave-animation {
+.pulse-ring {
   position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 2px;
-}
-
-.wave-animation span {
-  width: 3px;
-  height: 12px;
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 2px;
-  animation: wave 0.5s ease-in-out infinite;
-}
-
-@keyframes wave {
-  0%, 100% { transform: scaleY(0.5); }
-  50% { transform: scaleY(1); }
-}
-
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 87, 108, 0.4); }
-  50% { box-shadow: 0 0 0 15px rgba(245, 87, 108, 0); }
-}
-
-/* 旋转动画 */
-.spinner {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 40px;
-  height: 40px;
-  border: 3px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
+  inset: -4px;
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  border: 2px solid rgba(245, 87, 108, 0.6);
+  animation: pulse-expand 1.2s ease-out infinite;
+  pointer-events: none;
 }
 
-@keyframes spin {
-  to { transform: translate(-50%, -50%) rotate(360deg); }
+@keyframes pulse-expand {
+  0%   { transform: scale(1);   opacity: 0.8; }
+  100% { transform: scale(1.6); opacity: 0; }
 }
 
-/* 状态提示 */
-.status-hint {
-  font-size: 12px;
-  color: #666;
-  text-align: center;
-  min-height: 18px;
-  transition: color 0.3s;
-}
-
-.status-hint.recording {
-  color: #f5576c;
-}
-
-.status-hint.processing {
-  color: #00f2fe;
-}
-
-.status-hint.speaking {
-  color: #43e97b;
-}
-
-/* 音量指示器 */
-.volume-indicator {
-  width: 100px;
-  height: 4px;
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 2px;
+.status-label {
+  font-size: 10px;
+  color: rgba(102, 102, 102, 0.8);
+  white-space: nowrap;
+  max-width: 120px;
   overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s;
 }
 
-.volume-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #667eea, #764ba2);
-  transition: width 0.05s ease;
+.status-label.recording {
+  color: rgba(245, 87, 108, 0.9);
+}
+
+.status-label.processing {
+  color: rgba(79, 172, 254, 0.9);
+}
+
+.status-label.speaking {
+  color: rgba(67, 233, 123, 0.9);
 }
 </style>

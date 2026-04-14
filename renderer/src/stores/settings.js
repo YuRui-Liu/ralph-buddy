@@ -48,6 +48,11 @@ export const useSettingsStore = defineStore('settings', () => {
   // 天性模式触发间隔（分钟）
   const natureModeInterval = ref(5)
 
+  // ========== 语音设置 ==========
+
+  // 语音自动检测开关（持久化）
+  const autoVAD = ref(true)
+
   // ========== 情绪观察设置 ==========
 
   const emotionEnabled = ref(false)
@@ -135,6 +140,7 @@ export const useSettingsStore = defineStore('settings', () => {
         if (settings.alwaysOnTop !== undefined) alwaysOnTop.value = settings.alwaysOnTop
         if (settings.natureModeEnabled !== undefined) natureModeEnabled.value = settings.natureModeEnabled
         if (settings.natureModeInterval !== undefined) natureModeInterval.value = settings.natureModeInterval
+        if (settings.autoVAD !== undefined) autoVAD.value = settings.autoVAD
         if (settings.emotionEnabled !== undefined) emotionEnabled.value = settings.emotionEnabled
         if (settings.emotionInterval !== undefined) emotionInterval.value = settings.emotionInterval
       }
@@ -156,6 +162,7 @@ export const useSettingsStore = defineStore('settings', () => {
         alwaysOnTop: alwaysOnTop.value,
         natureModeEnabled: natureModeEnabled.value,
         natureModeInterval: natureModeInterval.value,
+        autoVAD: autoVAD.value,
         emotionEnabled: emotionEnabled.value,
         emotionInterval: emotionInterval.value,
       }
@@ -198,6 +205,9 @@ export const useSettingsStore = defineStore('settings', () => {
     natureModeEnabled,
     natureModeInterval,
     toggleNatureMode,
+
+    // 语音设置
+    autoVAD,
 
     // 情绪观察设置
     emotionEnabled,
