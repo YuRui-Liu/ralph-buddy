@@ -29,6 +29,7 @@
 import { ref, onMounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { usePetStore } from '../stores/pet'
+import { apiFetch } from '@/utils/api'
 
 const chatStore = useChatStore()
 const petStore = usePetStore()
@@ -50,7 +51,7 @@ async function sendMessage() {
 
   try {
     // 调用后端 API 获取回复
-    const response = await fetch(`http://localhost:${await getPythonPort()}/api/chat`, {
+    const response = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text })
@@ -67,14 +68,6 @@ async function sendMessage() {
     chatStore.setTyping(false)
     chatStore.showMessage('汪？来福没听清楚，再说一遍好吗？', 3000)
   }
-}
-
-// 获取 Python 服务端口号
-async function getPythonPort() {
-  if (window.electronAPI) {
-    return await window.electronAPI.getPythonPort()
-  }
-  return 18765
 }
 
 // 录音功能（占位）

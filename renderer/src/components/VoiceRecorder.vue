@@ -23,6 +23,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSettingsStore } from '../stores/settings'
 import { useSimpleVAD } from '../composables/useSimpleVAD'
+import { apiFetch } from '@/utils/api'
 
 const chatStore = useChatStore()
 const settings = useSettingsStore()
@@ -32,8 +33,6 @@ const isProcessing = ref(false)
 const isSpeaking = ref(false)
 const statusText = ref('')
 const vadListening = ref(false)
-
-let pythonPort = 18765
 
 // ── VAD 实例（浏览器端语音检测）──
 
@@ -140,7 +139,7 @@ async function processVADAudio(blob) {
     formData.append('audio', blob, 'recording.wav')
     formData.append('language', 'zh')
 
-    const sttRes = await fetch(`http://127.0.0.1:${pythonPort}/api/stt`, {
+    const sttRes = await apiFetch('/api/stt', {
       method: 'POST',
       body: formData
     })
@@ -158,7 +157,7 @@ async function processVADAudio(blob) {
 
     // Step 2: Chat
     statusText.value = '来福思考中...'
-    const chatRes = await fetch(`http://127.0.0.1:${pythonPort}/api/chat`, {
+    const chatRes = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: userText })
@@ -192,7 +191,7 @@ async function processVADAudio(blob) {
 
 async function startRecording() {
   try {
-    const res = await fetch(`http://127.0.0.1:${pythonPort}/api/mic/start`, { method: 'POST' })
+    const res = await apiFetch('/api/mic/start', { method: 'POST' })
     const data = await res.json()
     if (data.status === 'recording' || data.status === 'already_recording') {
       isRecording.value = true
@@ -211,7 +210,7 @@ async function stopAndTranscribe() {
   statusText.value = '识别中...'
 
   try {
-    const res = await fetch(`http://127.0.0.1:${pythonPort}/api/mic/stop`, { method: 'POST' })
+    const res = await apiFetch('/api/mic/stop', { method: 'POST' })
     const data = await res.json()
 
     if (!data.text || data.text.trim() === '') {
@@ -225,7 +224,7 @@ async function stopAndTranscribe() {
     statusText.value = `你: "${userText}"`
 
     statusText.value = '来福思考中...'
-    const chatRes = await fetch(`http://127.0.0.1:${pythonPort}/api/chat`, {
+    const chatRes = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: userText })
@@ -262,7 +261,7 @@ async function playResponse(text) {
     const formData = new FormData()
     formData.append('text', text)
 
-    const response = await fetch(`http://127.0.0.1:${pythonPort}/api/tts`, {
+    const response = await apiFetch('/api/tts', {
       method: 'POST',
       body: formData
     })
@@ -299,8 +298,6 @@ watch(() => settings.autoVAD, (enabled) => {
 // ── 生命周期 ──
 
 onMounted(async () => {
-  pythonPort = await window.electronAPI?.getPythonPort?.() || 18765
-
   // 如果 autoVAD 已启用，自动开始监听
   if (settings.autoVAD) {
     await startVAD()
@@ -317,7 +314,7 @@ onUnmounted(() => {
     vad.stop()
   }
   if (isRecording.value && !settings.autoVAD) {
-    fetch(`http://127.0.0.1:${pythonPort}/api/mic/cancel`, { method: 'POST' }).catch(() => {})
+    apiFetch('/api/mic/cancel', { method: 'POST' }).catch(() => {})
   }
 })
 </script>

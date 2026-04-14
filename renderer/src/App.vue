@@ -80,6 +80,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import DreamBubble from './components/DreamBubble.vue'
 import DreamDiary from './components/DreamDiary.vue'
 import PluginToolbar from './components/PluginToolbar.vue'
+import { apiFetch } from './utils/api'
 import { useNatureMode } from './composables/useNatureMode'
 import { useBreakReminder } from './composables/useBreakReminder'
 import { usePetAttributeTicker } from './composables/usePetAttributeTicker'
@@ -91,9 +92,8 @@ const settings = useSettingsStore()
 const petStore = usePetStore()
 
 async function doInteract(action) {
-  const port = await window.electronAPI?.getPythonPort?.() || 18765
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/pet/interact/${action}`, { method: 'POST' })
+    const res = await apiFetch(`/api/pet/interact/${action}`, { method: 'POST' })
     if (!res.ok) return
     const attrs = await res.json()
     petStore.applyAttributes(attrs)
@@ -199,8 +199,7 @@ onMounted(() => {
     // 插件窗口关闭时清理会话
     if (window.electronAPI?.onPluginWindowClosed) {
       window.electronAPI.onPluginWindowClosed(async (pluginId) => {
-        const port = await window.electronAPI?.getPythonPort?.() || 18765
-        fetch(`http://127.0.0.1:${port}/api/plugin/session/clear`, {
+        apiFetch('/api/plugin/session/clear', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: `${pluginId}_*` })

@@ -1,9 +1,9 @@
 <template>
-  <div class="diary-overlay" @click.self="$emit('close')">
-    <div class="diary-panel">
+  <div :class="standalone ? 'panel-standalone' : 'diary-overlay'" @click.self="close">
+    <div :class="standalone ? 'panel-full' : 'diary-panel'">
       <div class="diary-header">
         <h2>来福的梦境日记</h2>
-        <button class="close-btn" @click="$emit('close')">✕</button>
+        <button class="close-btn" @click="close">✕</button>
       </div>
 
       <div class="diary-content">
@@ -45,8 +45,18 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { apiFetch, apiUrl } from '@/utils/api'
 
-defineEmits(['close'])
+const props = defineProps({ standalone: { type: Boolean, default: false } })
+const emit = defineEmits(['close'])
+
+function close() {
+  if (props.standalone) {
+    window.pluginAPI?.closeWindow()
+  } else {
+    emit('close')
+  }
+}
 
 const dreams = ref([])
 const loading = ref(true)
@@ -64,14 +74,13 @@ function formatDate(iso) {
 
 onMounted(async () => {
   try {
-    const port = await window.electronAPI?.getPythonPort?.() || 18765
-    const res = await fetch(`http://127.0.0.1:${port}/api/dream/history`)
+    const res = await apiFetch('/api/dream/history')
     if (res.ok) {
       const data = await res.json()
       dreams.value = (data.dreams || []).map(d => ({
         ...d,
         image_url: d.image_path
-          ? `http://127.0.0.1:${port}/api/dream/image/${d.image_path.split('/').pop()}`
+          ? apiUrl(`/api/dream/image/${d.image_path.split('/').pop()}`)
           : null,
       }))
     }
@@ -93,6 +102,9 @@ onMounted(async () => {
   justify-content: center;
   z-index: 1000;
 }
+
+.panel-standalone { width: 100%; height: 100vh; background: #fff; }
+.panel-full { width: 100%; height: 100%; background: #fff; overflow-y: auto; }
 
 .diary-panel {
   width: 360px;
